@@ -131,7 +131,9 @@ impl App {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.request_quit();
             }
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('c')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.request_quit();
             }
             KeyCode::Tab => {
