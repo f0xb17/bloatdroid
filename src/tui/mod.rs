@@ -10,7 +10,7 @@
 
 use std::io::{self, Stdout};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
@@ -122,10 +122,17 @@ impl App {
     ///
     /// The global shortcuts are handled here, so they stay available no matter
     /// which panel has focus. Every other key is passed to the focused panel.
+    ///
+    /// `q`, `ESC`, and `Ctrl+C` all end the application through the same
+    /// [`App::request_quit`] path, so the event loop leaves through a single
+    /// shutdown sequence.
     pub fn handle_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('q') => {
-                self.running = false;
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.request_quit();
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.request_quit();
             }
             KeyCode::Tab => {
                 self.focus_next();
@@ -137,6 +144,11 @@ impl App {
                 self.handle_panel_key(key);
             }
         }
+    }
+
+    /// Stops the application the next time the event loop checks its state.
+    pub fn request_quit(&mut self) {
+        self.running = false;
     }
 
     /// Passes a key press to the focused panel.
