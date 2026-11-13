@@ -6,10 +6,10 @@ This project has no release history yet. Security fixes are applied to the lates
 
 The default branch is `main`.
 
-| Version | Supported |
-| ------- | --------- |
-| Latest commit on `main` | :white_check_mark: |
-| Any older commit or prior snapshot | :x: |
+| Version                            | Supported          |
+| ---------------------------------- | ------------------ |
+| Latest commit on `main`            | :white_check_mark: |
+| Any older commit or prior snapshot | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -17,10 +17,9 @@ The default branch is `main`.
 expose users to risk before a fix is available.
 
 GitHub private vulnerability reporting is not currently enabled for this
-repository, so please report privately by contacting either of the following
-maintainers directly on GitHub:
+repository, so please report privately by contacting the following
+maintainer directly on GitHub:
 
-- Jeroen van Wissen (@jeroenvanwissen)
 - f0xb17 (@f0xb17)
 
 If private vulnerability reporting is enabled for this repository in the
