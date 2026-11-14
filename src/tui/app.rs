@@ -2,6 +2,8 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::control::ControlPanel;
+use crate::control::ControlTarget;
 use crate::discover::AndroidDevice;
 
 use super::refresh::RefreshWorker;
@@ -65,13 +67,14 @@ pub struct App {
     selected: Option<usize>,
     overlay_open: bool,
     discovery_error: Option<String>,
+    control: ControlPanel,
     refresh: RefreshWorker,
     redraw: bool,
 }
 
 impl App {
     /// Creates the application with the first panel focused.
-    pub(crate) fn new(refresh: RefreshWorker) -> Self {
+    pub(crate) fn new(refresh: RefreshWorker, control: ControlPanel) -> Self {
         let app = Self {
             focused: Panel::DeviceSelection,
             running: true,
@@ -79,6 +82,7 @@ impl App {
             selected: None,
             overlay_open: false,
             discovery_error: None,
+            control,
             refresh,
             redraw: true,
         };
@@ -121,6 +125,11 @@ impl App {
         return self.discovery_error.as_deref();
     }
 
+    /// Returns the control panel shown in the Standby Crates panel.
+    pub fn control(&self) -> &ControlPanel {
+        return &self.control;
+    }
+
     /// Returns `true` when the interface has to be drawn again.
     pub fn needs_redraw(&self) -> bool {
         return self.redraw;
@@ -136,6 +145,13 @@ impl App {
         let outcomes = self.refresh.drain();
         for outcome in outcomes {
             self.apply_outcome(outcome);
+        }
+    }
+
+    /// Applies the control work that finished in the background.
+    pub fn poll_control(&mut self) {
+        if self.control.poll() {
+            self.redraw = true;
         }
     }
 
@@ -193,6 +209,7 @@ impl App {
         self.selected =
             self.reconciled_selection(previous_identifier, previous_index);
         self.redraw = true;
+        self.sync_control_target();
     }
 
     /// Returns the identifier of the selected device.
@@ -272,9 +289,41 @@ impl App {
 
     /// Passes a key press to the focused panel.
     fn handle_panel_key(&mut self, key: KeyEvent) {
-        if self.focused == Panel::DeviceSelection {
-            self.handle_device_selection_key(key);
+        match self.focused {
+            Panel::DeviceSelection => {
+                self.handle_device_selection_key(key);
+                self.sync_control_target();
+            }
+            Panel::StandbyCrates => {
+                self.handle_control_key(key);
+            }
+            _ => {}
         }
+    }
+
+    /// Handles a key press for the Standby Crates panel.
+    fn handle_control_key(&mut self, key: KeyEvent) {
+        if self.control.handle_key(key.code) {
+            self.redraw = true;
+        }
+    }
+
+    /// Keeps the control panel pointed at the selected device.
+    fn sync_control_target(&mut self) {
+        let target = self.control_target();
+        if self.control.set_target(target) {
+            self.redraw = true;
+        }
+    }
+
+    /// Returns the control target of the selected device.
+    fn control_target(&self) -> Option<ControlTarget> {
+        let device = self.selected_device()?;
+        let target = ControlTarget::new(
+            device.identifier.clone(),
+            device.sdk_version.clone(),
+        );
+        return Some(target);
     }
 
     /// Handles a key press for the device selection panel.

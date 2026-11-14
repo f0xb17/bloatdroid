@@ -6,6 +6,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
+use crate::control::ControlLine;
+
 use super::app::App;
 use super::app::Panel;
 
@@ -59,13 +61,44 @@ fn render_panel(frame: &mut Frame, app: &App, area: Rect, panel: Panel) {
         .title_alignment(Alignment::Center)
         .border_style(panel_style(focused));
 
-    if panel == Panel::DeviceSelection {
-        let body = Paragraph::new(device_lines(app)).block(block);
-        frame.render_widget(body, area);
-        return;
-    }
+    let lines = match panel {
+        Panel::DeviceSelection => device_lines(app),
+        Panel::StandbyCrates => control_lines(app),
+        _ => Vec::new(),
+    };
 
-    frame.render_widget(block, area);
+    let body = Paragraph::new(lines).block(block);
+    frame.render_widget(body, area);
+}
+
+/// Returns the control panel as rendered lines.
+fn control_lines(app: &App) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for line in app.control().lines() {
+        lines.push(control_line(&line));
+    }
+    return lines;
+}
+
+/// Returns one styled control panel line.
+fn control_line(line: &ControlLine) -> Line<'static> {
+    let marker = if line.is_focused() {
+        "> "
+    } else {
+        "  "
+    };
+
+    let style = if line.is_focused() {
+        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else if line.is_header() {
+        Style::new().add_modifier(Modifier::BOLD)
+    } else if line.is_status() {
+        Style::new().fg(Color::DarkGray)
+    } else {
+        Style::new()
+    };
+
+    return Line::styled(format!("{marker}{}", line.text()), style);
 }
 
 /// Returns the device list as rendered lines.

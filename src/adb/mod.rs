@@ -12,15 +12,18 @@
 //! - [`devices`] runs `adb devices -l`.
 //! - [`get_state`] runs `adb -s <serial> get-state`.
 //! - [`get_prop`] runs `adb -s <serial> shell getprop <property>`.
+//! - [`list_packages`] runs `adb -s <serial> shell pm list packages`.
 
 pub mod client;
 pub mod devices;
 pub mod error;
 pub mod get_prop;
 pub mod get_state;
+pub mod list_packages;
 
 pub use client::AdbClient;
 pub use devices::{AdbDeviceEntry, list_devices, parse_devices};
 pub use error::AdbError;
 pub use get_prop::get_prop;
 pub use get_state::get_state;
+pub use list_packages::{list_packages, parse_packages};

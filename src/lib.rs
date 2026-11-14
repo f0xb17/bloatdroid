@@ -6,5 +6,6 @@
 #![forbid(unsafe_code)]
 
 pub mod adb;
+pub mod control;
 pub mod discover;
 pub mod tui;
