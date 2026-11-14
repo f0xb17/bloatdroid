@@ -23,7 +23,17 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
       - name: Run the test suite
-        run: cargo test --all-targets --all-features
+        shell: bash
+        run: |
+          rustc --version | tee "${{ github.job }}.log"
+          cargo test --all-targets --all-features 2>&1 | tee -a "${{ github.job }}.log"
+      - name: Upload the test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-output-${{ github.job }}
+          path: ${{ github.job }}.log
+          if-no-files-found: warn
 
   test-ubuntu:
     runs-on: ubuntu-latest
@@ -39,7 +49,17 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
       - name: Run the test suite
-        run: cargo test --all-targets --all-features
+        shell: bash
+        run: |
+          rustc --version | tee "${{ github.job }}.log"
+          cargo test --all-targets --all-features 2>&1 | tee -a "${{ github.job }}.log"
+      - name: Upload the test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-output-${{ github.job }}
+          path: ${{ github.job }}.log
+          if-no-files-found: warn
 
   lint:
     runs-on: ubuntu-latest
@@ -58,3 +78,605 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run Clippy with warnings denied
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Summarizes every failing test job of this workflow run in a single issue.
+  # The issue body carries an HTML comment fingerprint of the normalized test
+  # failures, which is how a recurring failure is detected: an open issue with
+  # the same fingerprint receives a comment instead of a new issue.
+  report-test-failures:
+    needs: [test-windows, test-ubuntu]
+    if: ${{ always() && (needs.test-windows.result == 'failure' || needs.test-ubuntu.result == 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Download the test output
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: test-output-*
+          path: artifacts
+          merge-multiple: true
+      - name: Open or update the failure issue
+        uses: actions/github-script@v9
+        env:
+          TEST_WINDOWS_RESULT: ${{ needs.test-windows.result }}
+          TEST_UBUNTU_RESULT: ${{ needs.test-ubuntu.result }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const crypto = require('node:crypto');
+
+            const TEST_JOBS = [
+              {
+                id: 'test-windows',
+                runner: 'windows-latest',
+                result: process.env.TEST_WINDOWS_RESULT || 'unknown',
+              },
+              {
+                id: 'test-ubuntu',
+                runner: 'ubuntu-latest',
+                result: process.env.TEST_UBUNTU_RESULT || 'unknown',
+              },
+            ];
+
+            const ARTIFACT_DIRECTORY = 'artifacts';
+            const ISSUE_TITLE = '[CI] Automated tests failed';
+            const ISSUE_LABEL = 'ci-failure';
+            const MARKER_PREFIX = 'ci-failure-fingerprint';
+            const MAX_TESTS_PER_JOB = 5;
+            const MAX_EXCERPT_LINES = 12;
+            const MAX_LINE_LENGTH = 200;
+
+            function stripAnsi(text) {
+              return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+            }
+
+            // Removes everything that differs between machines and runs, so the
+            // same failure produces the same fingerprint on Windows and Ubuntu.
+            function normalizeForFingerprint(text) {
+              let normalized = stripAnsi(text);
+              normalized = normalized.replace(/\r\n?/g, '\n');
+              normalized = normalized.replace(/\\/g, '/');
+              normalized = normalized.replace(/[A-Za-z]:\/a\/_temp\/[^\s'"]*/g, '<temp>');
+              normalized = normalized.replace(/\/home\/runner\/work\/_temp\/[^\s'"]*/g, '<temp>');
+              normalized = normalized.replace(
+                /(?:[A-Za-z]:)?(?:\/[^\s:'"`/]+)*?\/(tests|src|examples)\//g,
+                '$1/',
+              );
+              normalized = normalized.replace(/\b\d+(\.\d+)?(ns|µs|ms|s)\b/g, '<duration>');
+              normalized = normalized.replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z?/g, '<timestamp>');
+              normalized = normalized.replace(/\s+/g, ' ').trim();
+              return normalized;
+            }
+
+            // Issue bodies are Markdown, so comment markers coming from test
+            // output could be mistaken for this workflow's own fingerprint.
+            function sanitizeForIssue(text) {
+              return text.replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
+            }
+
+            function parseCargoTestLog(text) {
+              const lines = stripAnsi(text).replace(/\r\n?/g, '\n').split('\n');
+              const failingTests = new Map();
+              const buildErrors = [];
+              let activeTest = null;
+              let activeMessage = [];
+
+              function finishTest() {
+                if (activeTest === null) {
+                  return;
+                }
+                const message = activeMessage.join('\n').trim();
+                // The "test ... FAILED" summary line registers the name first,
+                // so a following output section replaces its empty message.
+                if (message !== '' || !failingTests.has(activeTest)) {
+                  failingTests.set(activeTest, message);
+                }
+                activeTest = null;
+                activeMessage = [];
+              }
+
+              for (const line of lines) {
+                const header = /^---- (.+) stdout ----$/.exec(line);
+                if (header !== null) {
+                  finishTest();
+                  activeTest = header[1].trim();
+                  continue;
+                }
+                if (activeTest !== null) {
+                  if (/^(failures:|test result:|running \d+ tests)/.test(line)) {
+                    finishTest();
+                  } else {
+                    activeMessage.push(line);
+                    continue;
+                  }
+                }
+                const failedTest = /^test (.+) \.\.\. FAILED$/.exec(line);
+                if (failedTest !== null) {
+                  if (!failingTests.has(failedTest[1])) {
+                    failingTests.set(failedTest[1], '');
+                  }
+                  continue;
+                }
+                const buildError = /^error(\[[A-Za-z0-9]+\])?: (.+)$/.exec(line);
+                if (buildError === null) {
+                  if (buildErrors.length === 0) {
+                    continue;
+                  }
+                } else {
+                  const summary = /^(test failed|could not compile|aborting)/;
+                  if (!summary.test(buildError[2])) {
+                    buildErrors.push({ headline: line.trim(), location: '' });
+                    continue;
+                  }
+                }
+                const location = /^\s*-->\s+(\S+)\s*$/.exec(line);
+                if (location !== null) {
+                  const lastError = buildErrors[buildErrors.length - 1];
+                  if (lastError.location === '') {
+                    lastError.location = location[1];
+                  }
+                }
+              }
+              finishTest();
+
+              const tests = [];
+              for (const entry of failingTests) {
+                tests.push({ name: entry[0], message: entry[1] });
+              }
+              tests.sort(function byName(left, right) {
+                return left.name.localeCompare(right.name);
+              });
+              return { tests, buildErrors };
+            }
+
+            function readTestLogs() {
+              const logs = new Map();
+              if (!fs.existsSync(ARTIFACT_DIRECTORY)) {
+                core.warning('No test output artifact was downloaded.');
+                return logs;
+              }
+              const files = fs.readdirSync(ARTIFACT_DIRECTORY).sort();
+              for (const file of files) {
+                const fullPath = path.join(ARTIFACT_DIRECTORY, file);
+                if (!fs.statSync(fullPath).isFile()) {
+                  continue;
+                }
+                const job = TEST_JOBS.find(function matchingJob(candidate) {
+                  return file.startsWith(candidate.id);
+                });
+                if (job === undefined) {
+                  continue;
+                }
+                logs.set(job.id, fs.readFileSync(fullPath, 'utf8'));
+              }
+              return logs;
+            }
+
+            function findRustcVersion(text) {
+              const match = /^rustc [^\r\n]+/m.exec(stripAnsi(text));
+              return match === null ? '' : match[0].trim();
+            }
+
+            function analyzeJob(job, logText) {
+              const hasLog = logText !== undefined;
+              const parsed = parseCargoTestLog(hasLog ? logText : '');
+              return {
+                job,
+                failed: job.result === 'failure',
+                hasLog,
+                tests: parsed.tests,
+                buildErrors: parsed.buildErrors,
+                rustcVersion: hasLog ? findRustcVersion(logText) : '',
+              };
+            }
+
+            function collectFailureEntries(reports) {
+              const entries = new Set();
+              for (const report of reports) {
+                if (!report.failed) {
+                  continue;
+                }
+                for (const test of report.tests) {
+                  const message = normalizeForFingerprint(test.message);
+                  entries.add(`test ${test.name}: ${message}`);
+                }
+                for (const error of report.buildErrors) {
+                  const location = error.location === '' ? '' : ` @ ${error.location}`;
+                  const headline = normalizeForFingerprint(error.headline + location);
+                  entries.add(`build ${headline}`);
+                }
+              }
+              if (entries.size === 0) {
+                entries.add('test job failed without captured test output');
+              }
+              return entries;
+            }
+
+            function fingerprintFor(entries) {
+              const sorted = Array.from(entries).sort();
+              const digest = crypto
+                .createHash('sha256')
+                .update(sorted.join('\n'))
+                .digest('hex');
+              return digest.slice(0, 40);
+            }
+
+            function excerptOf(message) {
+              const rawLines = message.replace(/\r\n?/g, '\n').split('\n');
+              const kept = [];
+              for (const line of rawLines) {
+                if (kept.length >= MAX_EXCERPT_LINES) {
+                  break;
+                }
+                const shortened =
+                  line.length > MAX_LINE_LENGTH ? `${line.slice(0, MAX_LINE_LENGTH)}…` : line;
+                kept.push(sanitizeForIssue(shortened));
+              }
+              const text = kept.join('\n').trim();
+              if (rawLines.length > kept.length) {
+                return `${text}\n… (truncated, see the workflow logs)`;
+              }
+              return text;
+            }
+
+            function formatJobDetails(report) {
+              const lines = [`### \`${report.job.id}\``, ''];
+              if (!report.hasLog) {
+                lines.push('No test output was captured for this job. See the workflow logs linked below.');
+                return lines;
+              }
+              if (report.tests.length === 0 && report.buildErrors.length === 0) {
+                lines.push('The job failed without a parsable test failure. See the workflow logs linked below.');
+                return lines;
+              }
+              if (report.tests.length > 0) {
+                lines.push(`Failing tests (${report.tests.length}):`, '');
+                for (const test of report.tests) {
+                  lines.push(`- \`${sanitizeForIssue(test.name)}\``);
+                }
+                lines.push('');
+                const shown = report.tests.slice(0, MAX_TESTS_PER_JOB);
+                for (const test of shown) {
+                  const excerpt = excerptOf(test.message);
+                  if (excerpt === '') {
+                    continue;
+                  }
+                  lines.push(`#### \`${sanitizeForIssue(test.name)}\``, '', '```text');
+                  lines.push(excerpt);
+                  lines.push('```', '');
+                }
+                if (report.tests.length > shown.length) {
+                  lines.push(
+                    `Only the first ${shown.length} failing tests are shown here. The full output is in the workflow logs.`,
+                    '',
+                  );
+                }
+              }
+              if (report.buildErrors.length > 0) {
+                lines.push('Build errors:', '', '```text');
+                for (const error of report.buildErrors.slice(0, MAX_TESTS_PER_JOB)) {
+                  const location = error.location === '' ? '' : ` (${error.location})`;
+                  lines.push(`${sanitizeForIssue(error.headline)}${sanitizeForIssue(location)}`);
+                }
+                lines.push('```', '');
+              }
+              return lines;
+            }
+
+            function failedJobIds(reports) {
+              const ids = [];
+              for (const report of reports) {
+                if (report.failed) {
+                  ids.push(report.job.id);
+                }
+              }
+              return ids;
+            }
+
+            function describeFailedJobs(failure) {
+              const ids = failedJobIds(failure.reports);
+              const listed = [];
+              for (const id of ids) {
+                listed.push(`\`${id}\``);
+              }
+              return listed.join(' and ');
+            }
+
+            function distinctTestNames(failure) {
+              const names = new Set();
+              for (const report of failure.reports) {
+                if (!report.failed) {
+                  continue;
+                }
+                for (const test of report.tests) {
+                  names.add(test.name);
+                }
+              }
+              return names;
+            }
+
+            function buildSummary(failure) {
+              const ids = failedJobIds(failure.reports);
+              let summary =
+                ids.length > 1
+                  ? `Both test jobs failed in this workflow run for commit \`${failure.sha}\`.`
+                  : `The ${describeFailedJobs(failure)} test job failed in this workflow run for commit \`${failure.sha}\`.`;
+              const names = distinctTestNames(failure);
+              if (names.size === 1) {
+                summary += ' One distinct failing test was detected.';
+              } else if (names.size > 1) {
+                summary += ` ${names.size} distinct failing tests were detected.`;
+              }
+              summary +=
+                ' All failures from this workflow run are summarized below, and the complete logs are linked in the Workflow Run section.';
+              return summary;
+            }
+
+            function formatEnvironment(failure) {
+              const lines = ['## Environment', ''];
+              const runners = [];
+              for (const report of failure.reports) {
+                runners.push(`\`${report.job.runner}\``);
+              }
+              lines.push(`- Test runners: ${runners.join(', ')}`);
+              lines.push(
+                '- Rust toolchain: `stable`, resolved to the latest stable release on every run (`rust-toolchain.toml`)',
+              );
+              const versions = [];
+              for (const report of failure.reports) {
+                if (report.rustcVersion !== '') {
+                  versions.push(`\`${report.rustcVersion}\` (${report.job.id})`);
+                }
+              }
+              if (versions.length > 0) {
+                lines.push(`- rustc: ${versions.join(', ')}`);
+              }
+              lines.push('');
+              return lines;
+            }
+
+            function formatWorkflowRun(failure) {
+              const lines = ['## Workflow Run', ''];
+              lines.push(
+                `- Run: [workflow run](${failure.runUrl}) (run ID \`${failure.runId}\`, attempt ${failure.runAttempt})`,
+              );
+              const failedLinks = failure.jobLinks.filter(function failedJob(link) {
+                return link.failed;
+              });
+              if (failedLinks.length > 0) {
+                lines.push('- Failed job logs:');
+                for (const link of failedLinks) {
+                  lines.push(`  - [\`${link.jobId}\`](${link.url})`);
+                }
+              }
+              lines.push(`- Detected at: \`${failure.timestamp}\``, '');
+              return lines;
+            }
+
+            function formatCommit(failure) {
+              return [
+                '## Commit',
+                '',
+                `- \`${failure.sha}\``,
+                `- Branch: \`${failure.ref}\``,
+                `- Trigger: \`${failure.eventName}\``,
+                '',
+              ];
+            }
+
+            function buildIssueBody(failure) {
+              const lines = [];
+              lines.push(`<!-- ${MARKER_PREFIX}: ${failure.fingerprint} -->`);
+              lines.push('<!-- Used to detect duplicate CI failure reports. Do not remove. -->', '');
+              lines.push('## Summary', '', buildSummary(failure), '');
+              lines.push('## Failed Test Jobs', '');
+              for (const report of failure.reports) {
+                const marker = report.failed ? 'failed' : report.job.result;
+                lines.push(`- \`${report.job.id}\` (${report.job.runner}): **${marker}**`);
+              }
+              lines.push('', '## Failure Details', '');
+              for (const report of failure.reports) {
+                if (!report.failed) {
+                  continue;
+                }
+                for (const line of formatJobDetails(report)) {
+                  lines.push(line);
+                }
+                lines.push('');
+              }
+              for (const line of formatEnvironment(failure)) {
+                lines.push(line);
+              }
+              for (const line of formatWorkflowRun(failure)) {
+                lines.push(line);
+              }
+              for (const line of formatCommit(failure)) {
+                lines.push(line);
+              }
+              return lines.join('\n');
+            }
+
+            function buildCommentBody(failure) {
+              const names = distinctTestNames(failure);
+              const lines = [];
+              lines.push('### The same test failure occurred again', '');
+              lines.push(
+                `This failure was reported again in [workflow run](${failure.runUrl}).`,
+                '',
+              );
+              lines.push(`- Run ID: \`${failure.runId}\` (attempt ${failure.runAttempt})`);
+              lines.push(`- Commit: \`${failure.sha}\``);
+              lines.push(`- Branch: \`${failure.ref}\``);
+              lines.push(`- Failed jobs: ${describeFailedJobs(failure)}`);
+              if (names.size > 0) {
+                const listed = [];
+                for (const name of names) {
+                  listed.push(`\`${sanitizeForIssue(name)}\``);
+                }
+                lines.push(`- Failing tests: ${listed.join(', ')}`);
+              }
+              lines.push(`- Detected at: \`${failure.timestamp}\``, '');
+              lines.push('<details>', '<summary>Failure details</summary>', '');
+              for (const report of failure.reports) {
+                if (!report.failed) {
+                  continue;
+                }
+                for (const line of formatJobDetails(report)) {
+                  lines.push(line);
+                }
+                lines.push('');
+              }
+              lines.push('</details>', '');
+              lines.push(`Fingerprint: \`${failure.fingerprint}\``);
+              return lines.join('\n');
+            }
+
+            async function findOpenIssueWithFingerprint(owner, repo, marker) {
+              const issues = await github.paginate(github.rest.issues.listForRepo, {
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+              });
+              for (const issue of issues) {
+                if (issue.pull_request) {
+                  continue;
+                }
+                if (typeof issue.body === 'string' && issue.body.includes(marker)) {
+                  return issue;
+                }
+              }
+              return null;
+            }
+
+            async function fetchJobLinks(owner, repo, runId, reports) {
+              const links = [];
+              try {
+                const response = await github.rest.actions.listJobsForWorkflowRun({
+                  owner,
+                  repo,
+                  run_id: Number(runId),
+                  per_page: 100,
+                });
+                for (const job of response.data.jobs) {
+                  for (const report of reports) {
+                    if (job.name === report.job.id && job.html_url) {
+                      links.push({
+                        jobId: report.job.id,
+                        url: job.html_url,
+                        failed: report.failed,
+                      });
+                    }
+                  }
+                }
+              } catch (error) {
+                core.warning(`Could not list the workflow jobs: ${error.message}`);
+              }
+              return links;
+            }
+
+            async function ensureLabel(owner, repo) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: ISSUE_LABEL });
+                return true;
+              } catch (error) {
+                if (error.status !== 404) {
+                  core.warning(`Could not look up the "${ISSUE_LABEL}" label: ${error.message}`);
+                  return false;
+                }
+              }
+              try {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: ISSUE_LABEL,
+                  color: 'd73a4a',
+                  description: 'Automated CI test failure',
+                });
+                return true;
+              } catch (error) {
+                core.warning(
+                  `Could not create the "${ISSUE_LABEL}" label: ${error.message}. The issue will be created without it.`,
+                );
+                return false;
+              }
+            }
+
+            async function createIssue(owner, repo, body, hasLabel) {
+              const request = { owner, repo, title: ISSUE_TITLE, body };
+              try {
+                return await github.rest.issues.create(
+                  hasLabel ? { ...request, labels: [ISSUE_LABEL] } : request,
+                );
+              } catch (error) {
+                if (!hasLabel) {
+                  throw error;
+                }
+                core.warning(
+                  `Creating the issue with the "${ISSUE_LABEL}" label failed: ${error.message}. Retrying without the label.`,
+                );
+                return await github.rest.issues.create(request);
+              }
+            }
+
+            try {
+              const logs = readTestLogs();
+              const reports = [];
+              for (const job of TEST_JOBS) {
+                reports.push(analyzeJob(job, logs.get(job.id)));
+              }
+              const failedReports = reports.filter(function failed(report) {
+                return report.failed;
+              });
+              if (failedReports.length === 0) {
+                core.info('No test job failed, so no issue is needed.');
+                return;
+              }
+
+              const repository = process.env.GITHUB_REPOSITORY || '';
+              const [owner, repo] = repository.split('/');
+              const runId = process.env.GITHUB_RUN_ID || '';
+              const runAttempt = process.env.GITHUB_RUN_ATTEMPT || '1';
+              const serverUrl = process.env.GITHUB_SERVER_URL || 'https://github.com';
+              const runUrl = `${serverUrl}/${repository}/actions/runs/${runId}`;
+
+              const entries = collectFailureEntries(reports);
+              const fingerprint = fingerprintFor(entries);
+              core.info(`Failure fingerprint: ${fingerprint}`);
+
+              const failure = {
+                fingerprint,
+                reports,
+                runId,
+                runAttempt,
+                runUrl,
+                sha: process.env.GITHUB_SHA || '',
+                ref: process.env.GITHUB_REF_NAME || '',
+                eventName: process.env.GITHUB_EVENT_NAME || '',
+                timestamp: new Date().toISOString(),
+                jobLinks: await fetchJobLinks(owner, repo, runId, reports),
+              };
+
+              const marker = `<!-- ${MARKER_PREFIX}: ${fingerprint} -->`;
+              const existing = await findOpenIssueWithFingerprint(owner, repo, marker);
+              if (existing !== null) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  body: buildCommentBody(failure),
+                });
+                core.info(`Added this run to existing issue #${existing.number}.`);
+                return;
+              }
+
+              const hasLabel = await ensureLabel(owner, repo);
+              const created = await createIssue(owner, repo, buildIssueBody(failure), hasLabel);
+              core.info(`Created issue #${created.data.number} for this failure.`);
+            } catch (error) {
+              core.warning(`Failed to report the test failures: ${error.message}`);
+            }
