@@ -11,6 +11,7 @@ use crossterm::event::KeyCode;
 
 use crate::adb::AdbClient;
 
+use super::appops::AppOpsSection;
 use super::buckets::BucketsSection;
 use super::common::ControlEntry;
 use super::common::ControlLine;
@@ -48,8 +49,8 @@ impl ControlPanel {
     /// Creates the panel with every section collapsed.
     pub fn new(client: AdbClient) -> io::Result<Self> {
         let sections: Vec<Box<dyn ControlSection>> = vec![
-            Box::new(BucketsSection::new(client)?),
-            Box::new(SectionState::new(Section::AppOps)),
+            Box::new(BucketsSection::new(client.clone())?),
+            Box::new(AppOpsSection::new(client)?),
             Box::new(SectionState::new(Section::Inactive)),
             Box::new(SectionState::new(Section::Doze)),
         ];

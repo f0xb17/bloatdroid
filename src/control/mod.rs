@@ -4,7 +4,7 @@
 //! ADB operations:
 //!
 //! - [`buckets`] manages Android standby buckets.
-//! - [`appops`] will manage AppOps background execution restrictions.
+//! - [`appops`] manages AppOps background execution restrictions.
 //! - [`inactive`] will manage the Android application inactive state.
 //! - [`doze`] will manage the Doze whitelist.
 //!
