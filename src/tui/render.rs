@@ -24,7 +24,11 @@ const EXPANDED_INDICATOR: &str = "▼";
 const HEADER_BACKGROUND: Color = Color::Yellow;
 
 /// The fill of a section header that holds the cursor.
-const HEADER_FOCUSED_BACKGROUND: Color = Color::LightYellow;
+///
+/// A warm orange that contrasts with the yellow of every other header, so the
+/// focused section is recognizable at a glance. The color depends only on the
+/// focus, never on whether the section is expanded.
+const HEADER_FOCUSED_BACKGROUND: Color = Color::Rgb(230, 126, 34);
 
 /// Draws the four panels and, when it is open, the overlay.
 pub(crate) fn render(frame: &mut Frame, app: &App) {
@@ -168,9 +172,10 @@ fn control_content_style(line: &ControlLine) -> Style {
 
 /// Returns the style of a section header.
 ///
-/// Every header uses the same yellow-toned fill; the header that holds the
-/// cursor uses the brighter tone, so the focus stays visible without changing
-/// the design of the header.
+/// Every header uses the same yellow-toned fill, apart from the header that
+/// holds the cursor, which uses the contrasting focus tone. The expansion
+/// state plays no part in the choice, so a section looks the same expanded and
+/// collapsed.
 fn header_style(focused: bool) -> Style {
     let background = if focused {
         HEADER_FOCUSED_BACKGROUND
