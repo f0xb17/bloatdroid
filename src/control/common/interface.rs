@@ -3,6 +3,7 @@
 use crossterm::event::KeyCode;
 
 use super::entry::ControlEntry;
+use super::inventory::Inventory;
 use super::section::Section;
 use super::state::SectionState;
 use super::target::ControlTarget;
@@ -28,6 +29,15 @@ pub trait ControlSection {
     /// `None` means that no device is selected. Returns `true` when the
     /// section changed.
     fn set_target(&mut self, _target: Option<&ControlTarget>) -> bool {
+        return false;
+    }
+
+    /// Adopts the package inventory of the selected device.
+    ///
+    /// The panel reads the installed packages once and hands the same value to
+    /// every section, so no section asks the device for the package list.
+    /// Returns `true` when the section changed.
+    fn set_inventory(&mut self, _inventory: Inventory) -> bool {
         return false;
     }
 

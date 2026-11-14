@@ -2,6 +2,7 @@
 
 use crate::adb::AdbClient;
 use crate::control::common::ControlEntry;
+use crate::control::common::PackageInventory;
 use crate::control::common::WorkerTask;
 
 use super::commands::get_mode;
@@ -19,8 +20,11 @@ pub struct AppOpsTask {
 
 /// The operation an [`AppOpsTask`] performs.
 enum AppOpsOperation {
-    /// Read every application and its mode.
-    Load,
+    /// Read the mode of every package of the shared inventory.
+    Load {
+        /// The applications to read.
+        packages: PackageInventory,
+    },
     /// Set one application and verify the result.
     Change {
         /// The package to change.
@@ -41,13 +45,6 @@ pub enum AppOpsOutcome {
         entries: Vec<ControlEntry>,
         /// How many applications could not be read.
         unreadable: usize,
-    },
-    /// The applications could not be read.
-    LoadFailed {
-        /// The device the attempt was made on.
-        serial: String,
-        /// The failure, as shown to the user.
-        message: String,
     },
     /// A mode was applied and read back.
     Changed {
@@ -70,12 +67,19 @@ pub enum AppOpsOutcome {
 }
 
 impl AppOpsTask {
-    /// Builds a task that reads every application and its mode.
-    pub fn load(client: AdbClient, serial: String) -> Self {
+    /// Builds a task that reads the mode of every package of an inventory.
+    pub fn load(
+        client: AdbClient,
+        serial: String,
+        packages: PackageInventory,
+    ) -> Self {
+        let operation = AppOpsOperation::Load {
+            packages,
+        };
         let task = Self {
             client,
             serial,
-            operation: AppOpsOperation::Load,
+            operation,
         };
         return task;
     }
@@ -108,10 +112,6 @@ impl AppOpsOutcome {
                 serial,
                 ..
             } => serial,
-            AppOpsOutcome::LoadFailed {
-                serial,
-                ..
-            } => serial,
             AppOpsOutcome::Changed {
                 serial,
                 ..
@@ -130,8 +130,10 @@ impl WorkerTask for AppOpsTask {
 
     fn execute(self) -> AppOpsOutcome {
         match self.operation {
-            AppOpsOperation::Load => {
-                return load(&self.client, &self.serial);
+            AppOpsOperation::Load {
+                packages,
+            } => {
+                return load(&self.client, &self.serial, &packages);
             }
             AppOpsOperation::Change {
                 package,
@@ -143,18 +145,13 @@ impl WorkerTask for AppOpsTask {
     }
 }
 
-/// Reads every application, reporting a failure as an outcome.
-fn load(client: &AdbClient, serial: &str) -> AppOpsOutcome {
-    let snapshot = match read_appops(client, serial) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            let outcome = AppOpsOutcome::LoadFailed {
-                serial: String::from(serial),
-                message: error.to_string(),
-            };
-            return outcome;
-        }
-    };
+/// Reads the mode of every package of an inventory.
+fn load(
+    client: &AdbClient,
+    serial: &str,
+    packages: &[String],
+) -> AppOpsOutcome {
+    let snapshot = read_appops(client, serial, packages);
 
     let outcome = AppOpsOutcome::Loaded {
         serial: String::from(serial),

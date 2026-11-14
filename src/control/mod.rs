@@ -10,9 +10,12 @@
 //!
 //! [`common`] holds what the areas share: the expandable section state, the
 //! background worker that keeps ADB off the interface thread, the
-//! renderer-independent panel lines, and the interface between the panel and a
-//! section. [`ControlPanel`] composes the four sections for the Standby Crates
-//! panel and is the only type the terminal interface needs.
+//! renderer-independent panel lines, the package inventory of the selected
+//! device, and the interface between the panel and a section. [`ControlPanel`]
+//! composes the four sections for the Standby Crates panel, reads the installed
+//! package list once per device and hands it to every section, and keeps the
+//! cursor inside the visible area of the terminal. It is the only type the
+//! terminal interface needs.
 
 pub mod appops;
 pub mod buckets;

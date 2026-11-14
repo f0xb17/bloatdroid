@@ -7,6 +7,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use crate::control::ControlLine;
+use crate::control::ControlPanel;
 
 use super::app::App;
 use super::app::Panel;
@@ -31,7 +32,10 @@ const HEADER_BACKGROUND: Color = Color::Yellow;
 const HEADER_FOCUSED_BACKGROUND: Color = Color::Rgb(230, 126, 34);
 
 /// Draws the four panels and, when it is open, the overlay.
-pub(crate) fn render(frame: &mut Frame, app: &App) {
+///
+/// The application is borrowed mutably because the control panel learns the
+/// height of its area here, which decides how much of its content is visible.
+pub(crate) fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let rows = Layout::vertical([
         Constraint::Percentage(50),
@@ -73,7 +77,7 @@ pub(crate) fn render(frame: &mut Frame, app: &App) {
 }
 
 /// Draws a single panel, styled by whether it has focus.
-fn render_panel(frame: &mut Frame, app: &App, area: Rect, panel: Panel) {
+fn render_panel(frame: &mut Frame, app: &mut App, area: Rect, panel: Panel) {
     let focused = app.focused() == panel;
     let block = Block::bordered()
         .title(panel.title())
@@ -89,7 +93,8 @@ fn render_panel(frame: &mut Frame, app: &App, area: Rect, panel: Panel) {
             frame.render_widget(body, inner);
         }
         Panel::StandbyCrates => {
-            render_control(frame, app, inner);
+            app.set_control_viewport(usize::from(inner.height));
+            render_control(frame, app.control(), inner);
         }
         _ => {}
     }
@@ -98,12 +103,13 @@ fn render_panel(frame: &mut Frame, app: &App, area: Rect, panel: Panel) {
 /// Draws the control sections inside the Standby Crates panel.
 ///
 /// Every line occupies one row of the panel, so a section header can span the
-/// full width on its own.
-fn render_control(frame: &mut Frame, app: &App, area: Rect) {
+/// full width on its own. The panel already limited the lines to the ones that
+/// fit into the area, so no row is drawn outside it.
+fn render_control(frame: &mut Frame, control: &ControlPanel, area: Rect) {
     let bottom = area.y.saturating_add(area.height);
 
     let mut y = area.y;
-    for line in app.control().lines() {
+    for line in control.lines() {
         if y >= bottom {
             return;
         }

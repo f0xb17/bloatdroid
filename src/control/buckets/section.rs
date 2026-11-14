@@ -8,6 +8,7 @@ use crate::adb::AdbClient;
 use crate::control::common::ControlEntry;
 use crate::control::common::ControlSection;
 use crate::control::common::ControlTarget;
+use crate::control::common::Inventory;
 use crate::control::common::Section;
 use crate::control::common::SectionState;
 use crate::control::common::Worker;
@@ -49,6 +50,7 @@ pub struct BucketsSection {
     worker: Worker<BucketTask>,
     serial: Option<String>,
     support: BucketSupport,
+    inventory: Inventory,
     pending: Option<PendingChange>,
     loading: bool,
     loaded: bool,
@@ -64,6 +66,7 @@ impl BucketsSection {
             worker,
             serial: None,
             support: BucketSupport::for_sdk(""),
+            inventory: Inventory::Absent,
             pending: None,
             loading: false,
             loaded: false,
@@ -136,9 +139,13 @@ impl BucketsSection {
             Some(serial) => serial,
             None => return false,
         };
+        let packages = match &self.inventory {
+            Inventory::Loaded(packages) => packages.clone(),
+            _ => return false,
+        };
 
         self.loading = true;
-        let task = BucketTask::load(self.client.clone(), serial);
+        let task = BucketTask::load(self.client.clone(), serial, packages);
         if self.worker.submit(task).is_err() {
             self.loading = false;
             return self.state.set_status(Some(String::from(WORKER_STATUS)));
@@ -159,15 +166,6 @@ impl BucketsSection {
                 ..
             } => {
                 return self.apply_snapshot(entries, unreadable);
-            }
-            BucketOutcome::LoadFailed {
-                message,
-                ..
-            } => {
-                self.loading = false;
-                self.loaded = true;
-                let status = format!("could not list applications: {message}");
-                return self.state.set_status(Some(status));
             }
             BucketOutcome::Changed {
                 package,
@@ -233,12 +231,15 @@ impl BucketsSection {
         return changed;
     }
 
-    /// Returns `true` when the application list has to be read.
+    /// Returns `true` when the application states have to be read.
+    ///
+    /// The shared package inventory has to be there first: a section never
+    /// asks the device for the package list itself.
     fn needs_load(&self) -> bool {
-        if self.loading || self.loaded {
+        if self.loading || self.loaded || self.serial.is_none() {
             return false;
         }
-        return self.serial.is_some();
+        return matches!(self.inventory, Inventory::Loaded(_));
     }
 }
 
@@ -272,6 +273,7 @@ impl ControlSection for BucketsSection {
         self.pending = None;
         self.loading = false;
         self.loaded = false;
+        self.inventory = Inventory::Absent;
 
         let mut changed = self.state.replace_entries(Vec::new());
         if self.state.set_status(None) {
@@ -281,6 +283,33 @@ impl ControlSection for BucketsSection {
         if let Some(target) = target {
             self.serial = Some(target.serial.clone());
             self.support = BucketSupport::for_sdk(&target.sdk_version);
+        }
+        return changed;
+    }
+
+    fn set_inventory(&mut self, inventory: Inventory) -> bool {
+        self.inventory = inventory;
+        self.pending = None;
+        self.loading = false;
+        self.loaded = false;
+
+        let status = match &self.inventory {
+            Inventory::Loading => Some(String::from(LOADING_STATUS)),
+            Inventory::Failed(message) => Some(message.clone()),
+            _ => None,
+        };
+        let stale =
+            matches!(&self.inventory, Inventory::Absent | Inventory::Failed(_));
+
+        // The entries of a device that is gone or unreadable are dropped. A
+        // refresh of the same device keeps them until the new states arrive,
+        // so the selected application survives the reload.
+        let mut changed = false;
+        if stale && self.state.replace_entries(Vec::new()) {
+            changed = true;
+        }
+        if self.state.set_status(status) {
+            changed = true;
         }
         return changed;
     }

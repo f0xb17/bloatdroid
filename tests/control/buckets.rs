@@ -18,8 +18,8 @@ use super::harness::status_texts;
 use super::harness::wait_for;
 use super::harness::wait_for_commands;
 
-/// Expects the package listing and the bucket of every application.
-fn expect_load(mock: &MockAdb, applications: &[(&str, &str)]) {
+/// Expects the package listing of the given applications.
+fn expect_listing(mock: &MockAdb, applications: &[(&str, &str)]) {
     let mut listing = String::new();
     for &(package, _bucket) in applications {
         listing.push_str("package:");
@@ -30,13 +30,22 @@ fn expect_load(mock: &MockAdb, applications: &[(&str, &str)]) {
         &["-s", SERIAL, "shell", "pm", "list", "packages"],
         MockResponse::output(listing),
     );
+}
 
+/// Expects the bucket read of every given application.
+fn expect_buckets(mock: &MockAdb, applications: &[(&str, &str)]) {
     for &(package, bucket) in applications {
         mock.expect(
             &["-s", SERIAL, "shell", "am", "get-standby-bucket", package],
             MockResponse::output(bucket),
         );
     }
+}
+
+/// Expects the package listing and the bucket of every application.
+fn expect_load(mock: &MockAdb, applications: &[(&str, &str)]) {
+    expect_listing(mock, applications);
+    expect_buckets(mock, applications);
 }
 
 /// Expects the write of one bucket and the read that verifies it.
@@ -328,7 +337,7 @@ fn reports_listing_failures() {
 }
 
 #[test]
-fn keeps_the_selected_application_after_a_refresh() {
+fn keeps_the_selected_application_after_an_inventory_refresh() {
     let mock = MockAdb::new();
     expect_load(
         &mock,
@@ -338,7 +347,8 @@ fn keeps_the_selected_application_after_a_refresh() {
             ("com.example.charlie", "active"),
         ],
     );
-    // The second read adds an application in front of the selected one.
+    // The refreshed inventory adds an application in front of the selected
+    // one, and every bucket is read again for it.
     expect_load(
         &mock,
         &[
@@ -353,17 +363,13 @@ fn keeps_the_selected_application_after_a_refresh() {
     expand_buckets(&mut panel);
     wait_for_rows(&mut panel, 3);
 
-    // Collapsing lets the section forget the list, so expanding it reads a
-    // fresh one. The refresh happens while an application stays selected.
-    assert!(panel.handle_key(KeyCode::Char(' ')));
-    panel.poll();
-    assert!(panel.handle_key(KeyCode::Char(' ')));
-
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Down));
     assert_eq!(focused_row(&panel), "com.example.charlie  (active)");
 
+    // The refresh happens while an application stays selected.
+    assert!(panel.refresh_inventory());
     wait_for_rows(&mut panel, 4);
 
     assert_eq!(focused_row(&panel), "com.example.charlie  (active)");

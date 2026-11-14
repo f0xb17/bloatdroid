@@ -20,13 +20,8 @@ use super::harness::wait_for_commands;
 /// The serial of the second device used by the device switching tests.
 const OTHER_SERIAL: &str = "other-serial";
 
-/// Expects the package listing and the complete whitelist of a device.
-fn expect_load(
-    mock: &MockAdb,
-    serial: &str,
-    packages: &[&str],
-    whitelist: &str,
-) {
+/// Expects the package listing of the given applications.
+fn expect_listing(mock: &MockAdb, serial: &str, packages: &[&str]) {
     let mut listing = String::new();
     for package in packages {
         listing.push_str("package:");
@@ -37,10 +32,25 @@ fn expect_load(
         &["-s", serial, "shell", "pm", "list", "packages"],
         MockResponse::output(listing),
     );
+}
+
+/// Expects one read of the complete whitelist.
+fn expect_whitelist(mock: &MockAdb, serial: &str, whitelist: &str) {
     mock.expect(
         &["-s", serial, "shell", "cmd", "deviceidle", "whitelist"],
         MockResponse::output(whitelist),
     );
+}
+
+/// Expects the package listing and the complete whitelist of a device.
+fn expect_load(
+    mock: &MockAdb,
+    serial: &str,
+    packages: &[&str],
+    whitelist: &str,
+) {
+    expect_listing(mock, serial, packages);
+    expect_whitelist(mock, serial, whitelist);
 }
 
 /// Expects a whitelist command and the complete whitelist read after it.
@@ -98,6 +108,26 @@ fn only_status(panel: &ControlPanel) -> String {
         Some(status) => return String::from(status.as_str()),
         None => panic!("the status row disappeared"),
     }
+}
+
+/// Returns how often the package list of a device was read.
+fn package_listings(mock: &MockAdb, serial: &str) -> usize {
+    let wanted = vec![
+        String::from("-s"),
+        String::from(serial),
+        String::from("shell"),
+        String::from("pm"),
+        String::from("list"),
+        String::from("packages"),
+    ];
+
+    let mut count = 0;
+    for call in mock.calls() {
+        if call == wanted {
+            count += 1;
+        }
+    }
+    return count;
 }
 
 /// Returns how often the whitelist of a device was read.
@@ -516,13 +546,22 @@ fn reverts_changes_that_cannot_be_verified() {
 }
 
 #[test]
-fn loads_only_when_expanded() {
+fn loads_states_only_when_expanded() {
     let mock = MockAdb::new();
     expect_load(&mock, SERIAL, &["com.example.app"], "");
 
     let mut panel = panel_for(&mock, ANDROID_13);
-    panel.poll();
-    assert!(mock.calls().is_empty());
+
+    // The package inventory is read as soon as the panel polls, but the
+    // whitelist is not read while the section stays collapsed.
+    wait_for(&mut panel, |_| {
+        return package_listings(&mock, SERIAL) == 1;
+    });
+    for _ in 0..20 {
+        panel.poll();
+    }
+    assert_eq!(whitelist_reads(&mock, SERIAL), 0);
+    assert_eq!(mock.calls().len(), 1);
 
     expand_doze(&mut panel);
     wait_for_rows(&mut panel, 1);
@@ -530,15 +569,18 @@ fn loads_only_when_expanded() {
     for _ in 0..20 {
         panel.poll();
     }
+    assert_eq!(package_listings(&mock, SERIAL), 1);
     assert_eq!(whitelist_reads(&mock, SERIAL), 1);
     mock.assert_complete();
 }
 
 #[test]
-fn reloads_after_collapsing_and_expanding() {
+fn reloads_states_after_collapsing_and_expanding() {
     let mock = MockAdb::new();
     expect_load(&mock, SERIAL, &["com.example.alpha"], "");
-    expect_load(&mock, SERIAL, &["com.example.alpha", "com.example.bravo"], "");
+    // Expanding again reads the whitelist once more for the same packages, so
+    // the package list is not read a second time.
+    expect_whitelist(&mock, SERIAL, "user,com.example.alpha,10123\n");
 
     let mut panel = panel_for(&mock, ANDROID_13);
     expand_doze(&mut panel);
@@ -548,9 +590,12 @@ fn reloads_after_collapsing_and_expanding() {
     assert!(panel.handle_key(KeyCode::Char(' ')));
     panel.poll();
     assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for_rows(&mut panel, 2);
+    wait_for_commands(&mut panel, &mock);
 
+    assert_eq!(package_listings(&mock, SERIAL), 1);
     assert_eq!(whitelist_reads(&mock, SERIAL), 2);
+    let expected = vec![String::from("com.example.alpha  (user)")];
+    assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
 
@@ -594,12 +639,14 @@ fn discards_a_pending_change_when_the_device_changes() {
 #[test]
 fn ignores_results_from_a_previous_device() {
     let mock = MockAdb::new();
-    expect_load(&mock, SERIAL, &["com.example.first"], "");
+    // The inventory of the first device is read, but the device changes before
+    // its whitelist is, so the whitelist is never read for it.
+    expect_listing(&mock, SERIAL, &["com.example.first"]);
     expect_load(&mock, OTHER_SERIAL, &["com.example.second"], "");
 
     let mut panel = panel_for(&mock, ANDROID_13);
     expand_doze(&mut panel);
-    // The load for the first device is requested, then the device changes.
+    // The inventory for the first device is requested, then the device changes.
     panel.poll();
 
     let target = ControlTarget::new(
@@ -612,7 +659,9 @@ fn ignores_results_from_a_previous_device() {
         let expected = vec![String::from("com.example.second  (none)")];
         return entry_texts(panel) == expected;
     });
-    assert_eq!(whitelist_reads(&mock, SERIAL), 1);
+    assert_eq!(package_listings(&mock, SERIAL), 1);
+    assert_eq!(package_listings(&mock, OTHER_SERIAL), 1);
+    assert_eq!(whitelist_reads(&mock, SERIAL), 0);
     assert_eq!(whitelist_reads(&mock, OTHER_SERIAL), 1);
     mock.assert_complete();
 }

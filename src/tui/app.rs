@@ -130,6 +130,16 @@ impl App {
         return &self.control;
     }
 
+    /// Tells the control panel how many lines the Standby Crates panel shows.
+    ///
+    /// The renderer calls this with the height it has room for, so the control
+    /// panel scrolls to keep the cursor visible whatever the terminal size is.
+    pub fn set_control_viewport(&mut self, height: usize) {
+        if self.control.set_viewport(height) {
+            self.redraw = true;
+        }
+    }
+
     /// Returns `true` when the interface has to be drawn again.
     pub fn needs_redraw(&self) -> bool {
         return self.redraw;

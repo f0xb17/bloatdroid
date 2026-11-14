@@ -2,6 +2,7 @@
 
 use crate::adb::AdbClient;
 use crate::control::common::ControlEntry;
+use crate::control::common::PackageInventory;
 use crate::control::common::WorkerTask;
 
 use super::commands::get_standby_bucket;
@@ -18,8 +19,11 @@ pub struct BucketTask {
 
 /// The operation a [`BucketTask`] performs.
 enum BucketOperation {
-    /// Read every application and its bucket.
-    Load,
+    /// Read the bucket of every package of the shared inventory.
+    Load {
+        /// The applications to read.
+        packages: PackageInventory,
+    },
     /// Move one application into a bucket and verify the result.
     Change {
         /// The package to change.
@@ -40,13 +44,6 @@ pub enum BucketOutcome {
         entries: Vec<ControlEntry>,
         /// How many applications could not be read.
         unreadable: usize,
-    },
-    /// The applications could not be read.
-    LoadFailed {
-        /// The device the attempt was made on.
-        serial: String,
-        /// The failure, as shown to the user.
-        message: String,
     },
     /// A bucket was applied and read back.
     Changed {
@@ -69,12 +66,19 @@ pub enum BucketOutcome {
 }
 
 impl BucketTask {
-    /// Builds a task that reads every application and its bucket.
-    pub fn load(client: AdbClient, serial: String) -> Self {
+    /// Builds a task that reads the bucket of every package of an inventory.
+    pub fn load(
+        client: AdbClient,
+        serial: String,
+        packages: PackageInventory,
+    ) -> Self {
+        let operation = BucketOperation::Load {
+            packages,
+        };
         let task = Self {
             client,
             serial,
-            operation: BucketOperation::Load,
+            operation,
         };
         return task;
     }
@@ -107,10 +111,6 @@ impl BucketOutcome {
                 serial,
                 ..
             } => serial,
-            BucketOutcome::LoadFailed {
-                serial,
-                ..
-            } => serial,
             BucketOutcome::Changed {
                 serial,
                 ..
@@ -129,8 +129,10 @@ impl WorkerTask for BucketTask {
 
     fn execute(self) -> BucketOutcome {
         match self.operation {
-            BucketOperation::Load => {
-                return load(&self.client, &self.serial);
+            BucketOperation::Load {
+                packages,
+            } => {
+                return load(&self.client, &self.serial, &packages);
             }
             BucketOperation::Change {
                 package,
@@ -142,18 +144,13 @@ impl WorkerTask for BucketTask {
     }
 }
 
-/// Reads every application, reporting a failure as an outcome.
-fn load(client: &AdbClient, serial: &str) -> BucketOutcome {
-    let snapshot = match read_buckets(client, serial) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            let outcome = BucketOutcome::LoadFailed {
-                serial: String::from(serial),
-                message: error.to_string(),
-            };
-            return outcome;
-        }
-    };
+/// Reads the bucket of every package of an inventory.
+fn load(
+    client: &AdbClient,
+    serial: &str,
+    packages: &[String],
+) -> BucketOutcome {
+    let snapshot = read_buckets(client, serial, packages);
 
     let outcome = BucketOutcome::Loaded {
         serial: String::from(serial),

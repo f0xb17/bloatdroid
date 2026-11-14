@@ -4,7 +4,6 @@ use std::fmt;
 
 use crate::adb::AdbClient;
 use crate::adb::AdbError;
-use crate::adb::list_packages;
 use crate::control::common::ControlEntry;
 
 use super::commands::get_whitelist;
@@ -15,8 +14,6 @@ use super::parser::parse_whitelist;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum DozeError {
-    /// The installed applications could not be listed.
-    Packages(AdbError),
     /// The whitelist could not be read from the device.
     Whitelist(AdbError),
     /// The whitelist output could not be understood.
@@ -26,12 +23,6 @@ pub enum DozeError {
 impl fmt::Display for DozeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DozeError::Packages(error) => {
-                return write!(
-                    formatter,
-                    "could not list applications: {error}"
-                );
-            }
             DozeError::Whitelist(error) => {
                 return write!(
                     formatter,
@@ -51,9 +42,6 @@ impl fmt::Display for DozeError {
 impl std::error::Error for DozeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            DozeError::Packages(error) => {
-                return Some(error);
-            }
             DozeError::Whitelist(error) => {
                 return Some(error);
             }
@@ -64,22 +52,19 @@ impl std::error::Error for DozeError {
     }
 }
 
-/// Reads the whitelist state of every installed application.
+/// Reads the whitelist state of every package of the shared inventory.
 ///
-/// The complete whitelist is read once per scan and every installed
-/// application is classified from it, so an application that neither whitelist
-/// holds is not whitelisted. A whitelist that cannot be read or understood is
-/// an error rather than an empty one: no application can be classified safely
-/// without it, and reporting every application as not whitelisted would invite
-/// changes the device does not need.
+/// The complete whitelist is read once per scan and every package is
+/// classified from it, so an application that neither whitelist holds is not
+/// whitelisted. A whitelist that cannot be read or understood is an error
+/// rather than an empty one: no application can be classified safely without
+/// it, and reporting every application as not whitelisted would invite changes
+/// the device does not need.
 pub fn read_doze(
     client: &AdbClient,
     serial: &str,
+    packages: &[String],
 ) -> Result<Vec<ControlEntry>, DozeError> {
-    let packages = match list_packages(client, serial) {
-        Ok(packages) => packages,
-        Err(error) => return Err(DozeError::Packages(error)),
-    };
     let output = match get_whitelist(client, serial) {
         Ok(output) => output,
         Err(error) => return Err(DozeError::Whitelist(error)),
@@ -91,9 +76,9 @@ pub fn read_doze(
 
     let mut entries = Vec::new();
     for package in packages {
-        let state = whitelist.state_of(&package);
+        let state = whitelist.state_of(package);
         let entry = ControlEntry {
-            identifier: package,
+            identifier: package.clone(),
             value: String::from(state.name()),
         };
         entries.push(entry);

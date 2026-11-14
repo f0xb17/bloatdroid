@@ -2,6 +2,7 @@
 
 use crate::adb::AdbClient;
 use crate::control::common::ControlEntry;
+use crate::control::common::PackageInventory;
 use crate::control::common::WorkerTask;
 
 use super::commands::get_inactive;
@@ -19,8 +20,11 @@ pub struct InactiveTask {
 
 /// The operation an [`InactiveTask`] performs.
 enum InactiveOperation {
-    /// Read every application and its state.
-    Load,
+    /// Read the state of every package of the shared inventory.
+    Load {
+        /// The applications to read.
+        packages: PackageInventory,
+    },
     /// Set one application and verify the result.
     Change {
         /// The package to change.
@@ -41,13 +45,6 @@ pub enum InactiveOutcome {
         entries: Vec<ControlEntry>,
         /// How many applications could not be read.
         unreadable: usize,
-    },
-    /// The applications could not be read.
-    LoadFailed {
-        /// The device the attempt was made on.
-        serial: String,
-        /// The failure, as shown to the user.
-        message: String,
     },
     /// A state was applied and read back.
     Changed {
@@ -70,12 +67,19 @@ pub enum InactiveOutcome {
 }
 
 impl InactiveTask {
-    /// Builds a task that reads every application and its state.
-    pub fn load(client: AdbClient, serial: String) -> Self {
+    /// Builds a task that reads the state of every package of an inventory.
+    pub fn load(
+        client: AdbClient,
+        serial: String,
+        packages: PackageInventory,
+    ) -> Self {
+        let operation = InactiveOperation::Load {
+            packages,
+        };
         let task = Self {
             client,
             serial,
-            operation: InactiveOperation::Load,
+            operation,
         };
         return task;
     }
@@ -108,10 +112,6 @@ impl InactiveOutcome {
                 serial,
                 ..
             } => serial,
-            InactiveOutcome::LoadFailed {
-                serial,
-                ..
-            } => serial,
             InactiveOutcome::Changed {
                 serial,
                 ..
@@ -130,8 +130,10 @@ impl WorkerTask for InactiveTask {
 
     fn execute(self) -> InactiveOutcome {
         match self.operation {
-            InactiveOperation::Load => {
-                return load(&self.client, &self.serial);
+            InactiveOperation::Load {
+                packages,
+            } => {
+                return load(&self.client, &self.serial, &packages);
             }
             InactiveOperation::Change {
                 package,
@@ -143,18 +145,13 @@ impl WorkerTask for InactiveTask {
     }
 }
 
-/// Reads every application, reporting a failure as an outcome.
-fn load(client: &AdbClient, serial: &str) -> InactiveOutcome {
-    let snapshot = match read_inactive(client, serial) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            let outcome = InactiveOutcome::LoadFailed {
-                serial: String::from(serial),
-                message: error.to_string(),
-            };
-            return outcome;
-        }
-    };
+/// Reads the state of every package of an inventory.
+fn load(
+    client: &AdbClient,
+    serial: &str,
+    packages: &[String],
+) -> InactiveOutcome {
+    let snapshot = read_inactive(client, serial, packages);
 
     let outcome = InactiveOutcome::Loaded {
         serial: String::from(serial),

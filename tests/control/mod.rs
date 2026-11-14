@@ -5,5 +5,8 @@ mod buckets;
 mod doze;
 mod harness;
 mod inactive;
+mod inventory;
 mod panel;
+mod scanning;
+mod scrolling;
 mod sections;

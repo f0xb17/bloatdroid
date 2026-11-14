@@ -10,6 +10,10 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::thread;
+use std::time::Duration;
 
 use bloatdroid::adb::AdbClient;
 use bloatdroid::adb::AdbError;
@@ -58,6 +62,7 @@ struct MockState {
     expectations: Vec<Expectation>,
     calls: Vec<Vec<String>>,
     unexpected: Vec<Vec<String>>,
+    delay: Option<Duration>,
 }
 
 /// An ADB runner that answers from expectations instead of running ADB.
@@ -65,6 +70,8 @@ struct MockState {
 #[non_exhaustive]
 pub struct MockAdb {
     state: Arc<Mutex<MockState>>,
+    in_flight: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
 }
 
 impl Default for MockAdb {
@@ -80,11 +87,24 @@ impl MockAdb {
             expectations: Vec::new(),
             calls: Vec::new(),
             unexpected: Vec::new(),
+            delay: None,
         };
         let mock = Self {
             state: Arc::new(Mutex::new(state)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
         };
         return mock;
+    }
+
+    /// Makes every answer take a moment, so overlapping commands can be seen.
+    pub fn set_delay(&self, delay: Duration) {
+        self.lock().delay = Some(delay);
+    }
+
+    /// Returns the largest number of commands that ran at the same time.
+    pub fn peak_concurrency(&self) -> usize {
+        return self.peak.load(Ordering::SeqCst);
     }
 
     /// Expects one ADB command and the answer it produces.
@@ -158,8 +178,29 @@ impl MockAdb {
 
 impl AdbRunner for MockAdb {
     fn run(&self, arguments: &[&str]) -> Result<String, AdbError> {
+        let (answer, delay) = self.answer(arguments);
+
+        // The counters stay outside the state lock, so the mock shows how many
+        // commands really overlap instead of how many are waiting for it.
+        let active = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(active, Ordering::SeqCst);
+        if let Some(delay) = delay {
+            thread::sleep(delay);
+        }
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        return answer;
+    }
+}
+
+impl MockAdb {
+    /// Records one command and returns its answer and the configured delay.
+    fn answer(
+        &self,
+        arguments: &[&str],
+    ) -> (Result<String, AdbError>, Option<Duration>) {
         let wanted = to_vec(arguments);
         let mut state = self.lock();
+        let delay = state.delay;
         state.calls.push(wanted.clone());
 
         let mut found = None;
@@ -176,7 +217,8 @@ impl AdbRunner for MockAdb {
                 state.unexpected.push(wanted.clone());
                 let message =
                     format!("unexpected adb command: {}", joined(&wanted));
-                return Err(AdbError::Io(io::Error::other(message)));
+                let error = AdbError::Io(io::Error::other(message));
+                return (Err(error), delay);
             }
         };
 
@@ -187,10 +229,11 @@ impl AdbRunner for MockAdb {
             }
             None => {
                 let message = format!("lost expectation: {}", joined(&wanted));
-                return Err(AdbError::Io(io::Error::other(message)));
+                let error = AdbError::Io(io::Error::other(message));
+                return (Err(error), delay);
             }
         };
-        return respond(&response, &wanted);
+        return (respond(&response, &wanted), delay);
     }
 }
 

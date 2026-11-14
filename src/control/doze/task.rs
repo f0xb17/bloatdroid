@@ -2,6 +2,7 @@
 
 use crate::adb::AdbClient;
 use crate::control::common::ControlEntry;
+use crate::control::common::PackageInventory;
 use crate::control::common::WorkerTask;
 
 use super::commands::add_whitelist_entry;
@@ -21,8 +22,11 @@ pub struct DozeTask {
 
 /// The operation a [`DozeTask`] performs.
 enum DozeOperation {
-    /// Read every application and its whitelist state.
-    Load,
+    /// Read the whitelist state of every package of the shared inventory.
+    Load {
+        /// The applications to classify.
+        packages: PackageInventory,
+    },
     /// Change one application and verify the result.
     Change {
         /// The package to change.
@@ -70,12 +74,19 @@ pub enum DozeOutcome {
 }
 
 impl DozeTask {
-    /// Builds a task that reads every application and its whitelist state.
-    pub fn load(client: AdbClient, serial: String) -> Self {
+    /// Builds a task that classifies every package of an inventory.
+    pub fn load(
+        client: AdbClient,
+        serial: String,
+        packages: PackageInventory,
+    ) -> Self {
+        let operation = DozeOperation::Load {
+            packages,
+        };
         let task = Self {
             client,
             serial,
-            operation: DozeOperation::Load,
+            operation,
         };
         return task;
     }
@@ -130,8 +141,10 @@ impl WorkerTask for DozeTask {
 
     fn execute(self) -> DozeOutcome {
         match self.operation {
-            DozeOperation::Load => {
-                return load(&self.client, &self.serial);
+            DozeOperation::Load {
+                packages,
+            } => {
+                return load(&self.client, &self.serial, &packages);
             }
             DozeOperation::Change {
                 package,
@@ -143,9 +156,10 @@ impl WorkerTask for DozeTask {
     }
 }
 
-/// Reads every application, reporting a failure as an outcome.
-fn load(client: &AdbClient, serial: &str) -> DozeOutcome {
-    let entries = match read_doze(client, serial) {
+/// Classifies every package of an inventory, reporting a failure as an
+/// outcome.
+fn load(client: &AdbClient, serial: &str, packages: &[String]) -> DozeOutcome {
+    let entries = match read_doze(client, serial, packages) {
         Ok(entries) => entries,
         Err(error) => {
             let outcome = DozeOutcome::LoadFailed {

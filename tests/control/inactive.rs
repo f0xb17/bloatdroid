@@ -20,8 +20,8 @@ use super::harness::wait_for_commands;
 /// The serial of the second device used by the device switching tests.
 const OTHER_SERIAL: &str = "other-serial";
 
-/// Expects the package listing and the state of every application.
-fn expect_load(mock: &MockAdb, serial: &str, applications: &[(&str, &str)]) {
+/// Expects the package listing of the given applications.
+fn expect_listing(mock: &MockAdb, serial: &str, applications: &[(&str, &str)]) {
     let mut listing = String::new();
     for &(package, _output) in applications {
         listing.push_str("package:");
@@ -32,13 +32,22 @@ fn expect_load(mock: &MockAdb, serial: &str, applications: &[(&str, &str)]) {
         &["-s", serial, "shell", "pm", "list", "packages"],
         MockResponse::output(listing),
     );
+}
 
+/// Expects the state read of every given application.
+fn expect_states(mock: &MockAdb, serial: &str, applications: &[(&str, &str)]) {
     for &(package, output) in applications {
         mock.expect(
             &["-s", serial, "shell", "am", "get-inactive", package],
             MockResponse::output(output),
         );
     }
+}
+
+/// Expects the package listing and the state of every application.
+fn expect_load(mock: &MockAdb, serial: &str, applications: &[(&str, &str)]) {
+    expect_listing(mock, serial, applications);
+    expect_states(mock, serial, applications);
 }
 
 /// Expects a state change and the read that verifies it.
@@ -395,13 +404,21 @@ fn reverts_changes_that_cannot_be_verified() {
 }
 
 #[test]
-fn loads_only_when_expanded() {
+fn loads_states_only_when_expanded() {
     let mock = MockAdb::new();
     expect_load(&mock, SERIAL, &[("com.example.app", "Idle=false\n")]);
 
     let mut panel = panel_for(&mock, ANDROID_13);
-    panel.poll();
-    assert!(mock.calls().is_empty());
+
+    // The package inventory is read as soon as the panel polls, but no state is
+    // read while the section stays collapsed.
+    wait_for(&mut panel, |_| {
+        return package_listings(&mock, SERIAL) == 1;
+    });
+    for _ in 0..20 {
+        panel.poll();
+    }
+    assert_eq!(mock.calls().len(), 1);
 
     expand_inactive(&mut panel);
     wait_for_rows(&mut panel, 1);
@@ -410,21 +427,17 @@ fn loads_only_when_expanded() {
         panel.poll();
     }
     assert_eq!(package_listings(&mock, SERIAL), 1);
+    assert_eq!(mock.calls().len(), 2);
     mock.assert_complete();
 }
 
 #[test]
-fn reloads_after_collapsing_and_expanding() {
+fn reloads_states_after_collapsing_and_expanding() {
     let mock = MockAdb::new();
     expect_load(&mock, SERIAL, &[("com.example.alpha", "Idle=false\n")]);
-    expect_load(
-        &mock,
-        SERIAL,
-        &[
-            ("com.example.alpha", "Idle=false\n"),
-            ("com.example.bravo", "Idle=true\n"),
-        ],
-    );
+    // Expanding again reads the states once more from the shared inventory, so
+    // the package list is not read a second time.
+    expect_states(&mock, SERIAL, &[("com.example.alpha", "Idle=true\n")]);
 
     let mut panel = panel_for(&mock, ANDROID_13);
     expand_inactive(&mut panel);
@@ -434,9 +447,11 @@ fn reloads_after_collapsing_and_expanding() {
     assert!(panel.handle_key(KeyCode::Char(' ')));
     panel.poll();
     assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for_rows(&mut panel, 2);
+    wait_for_commands(&mut panel, &mock);
 
-    assert_eq!(package_listings(&mock, SERIAL), 2);
+    assert_eq!(package_listings(&mock, SERIAL), 1);
+    let expected = vec![String::from("com.example.alpha  (inactive)")];
+    assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
 
@@ -470,12 +485,14 @@ fn discards_a_pending_change_when_the_device_changes() {
 #[test]
 fn ignores_results_from_a_previous_device() {
     let mock = MockAdb::new();
-    expect_load(&mock, SERIAL, &[("com.example.first", "Idle=false\n")]);
+    // The inventory of the first device is read, but the device changes before
+    // any of its states is, so no state is ever read for it.
+    expect_listing(&mock, SERIAL, &[("com.example.first", "Idle=false\n")]);
     expect_load(&mock, OTHER_SERIAL, &[("com.example.second", "Idle=true\n")]);
 
     let mut panel = panel_for(&mock, ANDROID_13);
     expand_inactive(&mut panel);
-    // The load for the first device is requested, then the device changes.
+    // The inventory for the first device is requested, then the device changes.
     panel.poll();
 
     let target = ControlTarget::new(
@@ -490,5 +507,7 @@ fn ignores_results_from_a_previous_device() {
     });
     assert_eq!(package_listings(&mock, SERIAL), 1);
     assert_eq!(package_listings(&mock, OTHER_SERIAL), 1);
+    // Both listings and the one state read of the new device.
+    assert_eq!(mock.calls().len(), 3);
     mock.assert_complete();
 }

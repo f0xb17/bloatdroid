@@ -1,9 +1,8 @@
 //! Reading the inactive state of every installed application.
 
 use crate::adb::AdbClient;
-use crate::adb::AdbError;
-use crate::adb::list_packages;
 use crate::control::common::ControlEntry;
+use crate::control::common::batch::query_packages;
 
 use super::commands::get_inactive;
 
@@ -19,24 +18,27 @@ pub struct InactiveSnapshot {
     pub unreadable: usize,
 }
 
-/// Reads the inactive state of every installed application.
+/// Reads the inactive state of every package of the shared inventory.
 ///
 /// An application whose state cannot be read is kept in the list with
 /// [`UNKNOWN_STATE`] as its value and counted in
 /// [`InactiveSnapshot::unreadable`], so a single failure does not hide the
-/// rest of the list. A failure to list the packages is returned as an error.
+/// rest of the list.
 pub fn read_inactive(
     client: &AdbClient,
     serial: &str,
-) -> Result<InactiveSnapshot, AdbError> {
-    let packages = list_packages(client, serial)?;
+    packages: &[String],
+) -> InactiveSnapshot {
+    let answers = query_packages(packages, |package| {
+        return get_inactive(client, serial, package);
+    });
 
     let mut entries = Vec::new();
     let mut unreadable = 0;
 
-    for package in packages {
-        let value = match get_inactive(client, serial, &package) {
-            Ok(Some(state)) => String::from(state.name()),
+    for (index, package) in packages.iter().enumerate() {
+        let value = match answers.get(index) {
+            Some(Ok(Some(state))) => String::from(state.name()),
             _ => {
                 unreadable += 1;
                 String::from(UNKNOWN_STATE)
@@ -44,7 +46,7 @@ pub fn read_inactive(
         };
 
         let entry = ControlEntry {
-            identifier: package,
+            identifier: package.clone(),
             value,
         };
         entries.push(entry);
@@ -54,5 +56,5 @@ pub fn read_inactive(
         entries,
         unreadable,
     };
-    return Ok(snapshot);
+    return snapshot;
 }

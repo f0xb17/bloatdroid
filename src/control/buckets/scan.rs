@@ -1,9 +1,8 @@
-//! Reading the standby bucket of every installed application.
+//! Reading the standby bucket of every application.
 
 use crate::adb::AdbClient;
-use crate::adb::AdbError;
-use crate::adb::list_packages;
 use crate::control::common::ControlEntry;
+use crate::control::common::batch::query_packages;
 
 use super::commands::get_standby_bucket;
 
@@ -19,24 +18,27 @@ pub struct BucketSnapshot {
     pub unreadable: usize,
 }
 
-/// Reads the standby bucket of every installed application.
+/// Reads the standby bucket of every package of the shared inventory.
 ///
 /// An application whose bucket cannot be read is kept in the list with
 /// [`UNKNOWN_BUCKET`] as its value and counted in
 /// [`BucketSnapshot::unreadable`], so a single failure does not hide the rest
-/// of the list. A failure to list the packages is returned as an error.
+/// of the list.
 pub fn read_buckets(
     client: &AdbClient,
     serial: &str,
-) -> Result<BucketSnapshot, AdbError> {
-    let packages = list_packages(client, serial)?;
+    packages: &[String],
+) -> BucketSnapshot {
+    let answers = query_packages(packages, |package| {
+        return get_standby_bucket(client, serial, package);
+    });
 
     let mut entries = Vec::new();
     let mut unreadable = 0;
 
-    for package in packages {
-        let bucket = match get_standby_bucket(client, serial, &package) {
-            Ok(bucket) if !bucket.is_empty() => bucket,
+    for (index, package) in packages.iter().enumerate() {
+        let bucket = match answers.get(index) {
+            Some(Ok(answer)) if !answer.is_empty() => answer.clone(),
             _ => {
                 unreadable += 1;
                 String::from(UNKNOWN_BUCKET)
@@ -44,7 +46,7 @@ pub fn read_buckets(
         };
 
         let entry = ControlEntry {
-            identifier: package,
+            identifier: package.clone(),
             value: bucket,
         };
         entries.push(entry);
@@ -54,5 +56,5 @@ pub fn read_buckets(
         entries,
         unreadable,
     };
-    return Ok(snapshot);
+    return snapshot;
 }

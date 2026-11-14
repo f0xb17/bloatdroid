@@ -4,6 +4,11 @@
 //! headers and entries that are currently visible, and forwards a key press to
 //! the section that owns the selected entry. It does not know what any section
 //! actually does.
+//!
+//! The panel also owns what the sections share: the package inventory of the
+//! selected device, which is read once and handed to every section, and the
+//! scroll position, which keeps the cursor inside the visible area of the
+//! terminal.
 
 use std::io;
 
@@ -17,13 +22,23 @@ use super::common::ControlEntry;
 use super::common::ControlLine;
 use super::common::ControlSection;
 use super::common::ControlTarget;
+use super::common::Inventory;
 use super::common::Section;
 use super::common::SectionState;
+use super::common::Worker;
+use super::common::inventory::InventoryOutcome;
+use super::common::inventory::InventoryTask;
 use super::doze::DozeSection;
 use super::inactive::InactiveSection;
 
 /// The message shown for an expanded section without entries.
 const NO_ENTRIES: &str = "no applications";
+
+/// The name of the thread that reads the installed package list.
+const INVENTORY_THREAD: &str = "package-inventory";
+
+/// Shown when the inventory thread is no longer running.
+const INVENTORY_STATUS: &str = "the package inventory worker has stopped";
 
 /// One position the cursor can occupy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +60,12 @@ pub struct ControlPanel {
     sections: Vec<Box<dyn ControlSection>>,
     cursor: Slot,
     target: Option<ControlTarget>,
+    client: AdbClient,
+    inventory: Inventory,
+    inventory_requested: bool,
+    inventory_worker: Worker<InventoryTask>,
+    viewport: Option<usize>,
+    offset: usize,
 }
 
 impl ControlPanel {
@@ -54,20 +75,29 @@ impl ControlPanel {
             Box::new(BucketsSection::new(client.clone())?),
             Box::new(AppOpsSection::new(client.clone())?),
             Box::new(InactiveSection::new(client.clone())?),
-            Box::new(DozeSection::new(client)?),
+            Box::new(DozeSection::new(client.clone())?),
         ];
+        let inventory_worker = Worker::spawn(INVENTORY_THREAD)?;
 
         let panel = Self {
             sections,
             cursor: Slot::Header(Section::Buckets),
             target: None,
+            client,
+            inventory: Inventory::Absent,
+            inventory_requested: false,
+            inventory_worker,
+            viewport: None,
+            offset: 0,
         };
         return Ok(panel);
     }
 
     /// Points the panel at the device that the sections operate on.
     ///
-    /// Returns `true` when the panel changed.
+    /// The inventory of the previous device is dropped immediately, so nothing
+    /// from an old device stays on screen or is reused. Returns `true` when the
+    /// panel changed.
     pub fn set_target(&mut self, target: Option<ControlTarget>) -> bool {
         if self.target == target {
             return false;
@@ -81,10 +111,38 @@ impl ControlPanel {
         }
 
         self.target = target;
+        self.inventory_requested = false;
+        if self.publish_inventory(Inventory::Absent) {
+            changed = true;
+        }
         if self.normalize_cursor() {
             changed = true;
         }
+        if self.scroll_to_cursor() {
+            changed = true;
+        }
         return changed;
+    }
+
+    /// Reads the installed packages of the selected device again.
+    ///
+    /// Every section rescans its own state against the new list. Returns
+    /// `true` when the panel changed.
+    pub fn refresh_inventory(&mut self) -> bool {
+        self.inventory_requested = false;
+        return self.request_inventory();
+    }
+
+    /// Tells the panel how many lines fit into the visible area.
+    ///
+    /// The renderer calls this with the height of the Standby Crates panel, so
+    /// the scroll position follows the terminal size. Returns `true` when the
+    /// visible lines changed.
+    pub fn set_viewport(&mut self, height: usize) -> bool {
+        let previous = self.viewport;
+        self.viewport = Some(height);
+        let moved = self.scroll_to_cursor();
+        return previous != Some(height) || moved;
     }
 
     /// Handles a key press while the panel has focus.
@@ -106,16 +164,34 @@ impl ControlPanel {
         if handled {
             changed = true;
         }
+        if self.scroll_to_cursor() {
+            changed = true;
+        }
         return changed;
     }
 
     /// Applies the background work that finished since the last call.
     ///
+    /// The inventory is read first, so a section that starts scanning in the
+    /// same call already works with the package list of the selected device.
     /// Returns `true` when the panel changed.
     pub fn poll(&mut self) -> bool {
         let selected = self.selected_identifier();
 
         let mut changed = false;
+        if self.needs_inventory() && self.request_inventory() {
+            changed = true;
+        }
+
+        let outcomes = self.inventory_worker.drain();
+        for outcome in outcomes {
+            if let Some(inventory) = self.inventory_after(outcome)
+                && self.publish_inventory(inventory)
+            {
+                changed = true;
+            }
+        }
+
         for section in &mut self.sections {
             if section.poll() {
                 changed = true;
@@ -125,11 +201,42 @@ impl ControlPanel {
         if changed {
             self.restore_cursor(selected);
         }
+        if self.scroll_to_cursor() {
+            changed = true;
+        }
         return changed;
     }
 
-    /// Returns the panel content as renderer-independent lines.
+    /// Returns the lines that belong to the visible area of the panel.
+    ///
+    /// Nothing outside the viewport is built into a widget: the renderer draws
+    /// at most as many rows as the terminal has room for.
     pub fn lines(&self) -> Vec<ControlLine> {
+        let lines = self.full_lines();
+
+        let height = match self.viewport {
+            Some(height) => height,
+            None => return lines,
+        };
+        if height == 0 {
+            return Vec::new();
+        }
+
+        let start = self.offset.min(lines.len());
+        let end = lines.len().min(start.saturating_add(height));
+
+        let mut visible = Vec::new();
+        for index in start..end {
+            if let Some(line) = lines.get(index) {
+                visible.push(line.clone());
+            }
+        }
+        return visible;
+    }
+
+    /// Returns every line of the panel, including the ones that are scrolled
+    /// out of view.
+    fn full_lines(&self) -> Vec<ControlLine> {
         let mut lines = Vec::new();
 
         for control in &self.sections {
@@ -177,6 +284,106 @@ impl ControlPanel {
             }
         };
         lines.push(ControlLine::status(status));
+    }
+
+    /// Scrolls the visible area just enough to keep the cursor inside it.
+    ///
+    /// Returns `true` when the visible lines moved.
+    fn scroll_to_cursor(&mut self) -> bool {
+        let height = match self.viewport {
+            Some(height) if height > 0 => height,
+            _ => {
+                let moved = self.offset != 0;
+                self.offset = 0;
+                return moved;
+            }
+        };
+
+        let lines = self.full_lines();
+        let previous = self.offset;
+        let focused = Self::focused_line(&lines).unwrap_or_default();
+
+        if focused < self.offset {
+            self.offset = focused;
+        } else if focused >= self.offset.saturating_add(height) {
+            self.offset = focused.saturating_add(1).saturating_sub(height);
+        }
+
+        let maximum = lines.len().saturating_sub(height);
+        if self.offset > maximum {
+            self.offset = maximum;
+        }
+        return previous != self.offset;
+    }
+
+    /// Returns the position of the line that holds the cursor.
+    fn focused_line(lines: &[ControlLine]) -> Option<usize> {
+        for (index, line) in lines.iter().enumerate() {
+            if line.is_focused() {
+                return Some(index);
+            }
+        }
+        return None;
+    }
+
+    /// Starts reading the package list when the selected device has none yet.
+    fn needs_inventory(&self) -> bool {
+        if self.inventory_requested || self.target.is_none() {
+            return false;
+        }
+        return matches!(self.inventory, Inventory::Absent);
+    }
+
+    /// Hands an inventory task to the inventory worker.
+    fn request_inventory(&mut self) -> bool {
+        let serial = match &self.target {
+            Some(target) => target.serial.clone(),
+            None => return false,
+        };
+
+        self.inventory_requested = true;
+        let task = InventoryTask::load(self.client.clone(), serial);
+        if self.inventory_worker.submit(task).is_err() {
+            let message = String::from(INVENTORY_STATUS);
+            return self.publish_inventory(Inventory::Failed(message));
+        }
+        return self.publish_inventory(Inventory::Loading);
+    }
+
+    /// Turns an inventory outcome into the inventory to publish.
+    ///
+    /// The outcome of a device that is no longer selected is dropped, so an
+    /// answer from an old device never replaces the inventory of the current
+    /// one.
+    fn inventory_after(&self, outcome: InventoryOutcome) -> Option<Inventory> {
+        let serial = self.target.as_ref()?.serial.as_str();
+        if outcome.serial() != serial {
+            return None;
+        }
+
+        let inventory = match outcome {
+            InventoryOutcome::Loaded {
+                packages,
+                ..
+            } => Inventory::Loaded(packages),
+            InventoryOutcome::Failed {
+                message,
+                ..
+            } => Inventory::Failed(message),
+        };
+        return Some(inventory);
+    }
+
+    /// Hands one inventory to every section and remembers it.
+    fn publish_inventory(&mut self, inventory: Inventory) -> bool {
+        let mut changed = false;
+        for section in &mut self.sections {
+            if section.set_inventory(inventory.clone()) {
+                changed = true;
+            }
+        }
+        self.inventory = inventory;
+        return changed;
     }
 
     /// Moves the cursor one visible line up.

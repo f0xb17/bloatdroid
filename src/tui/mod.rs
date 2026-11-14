@@ -50,7 +50,7 @@ pub fn run() -> io::Result<()> {
 
     while app.is_running() {
         if app.needs_redraw() {
-            session.draw(&app)?;
+            session.draw(&mut app)?;
             app.clear_redraw();
         }
 
@@ -105,7 +105,10 @@ impl TerminalSession {
     }
 
     /// Draws the current application state.
-    pub fn draw(&mut self, app: &App) -> io::Result<()> {
+    ///
+    /// The state is borrowed mutably because drawing tells the control panel
+    /// how tall its area is, which decides how much of it is visible.
+    pub fn draw(&mut self, app: &mut App) -> io::Result<()> {
         self.terminal.draw(|frame| render::render(frame, app))?;
         return Ok(());
     }
