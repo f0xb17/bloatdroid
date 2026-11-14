@@ -606,11 +606,13 @@ fn reloads_states_after_collapsing_and_expanding() {
     assert!(panel.handle_key(KeyCode::Char(' ')));
     panel.poll();
     assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for_commands(&mut panel, &mock);
+    // Expanding again rescans the modes, so wait for the refreshed row.
+    wait_for(&mut panel, |panel| {
+        let expected = vec![String::from("com.example.alpha  (default)")];
+        return entry_texts(panel) == expected;
+    });
 
     assert_eq!(package_listings(&mock, SERIAL), 1);
-    let expected = vec![String::from("com.example.alpha  (default)")];
-    assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
 
