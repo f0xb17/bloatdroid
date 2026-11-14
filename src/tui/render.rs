@@ -11,6 +11,21 @@ use crate::control::ControlLine;
 use super::app::App;
 use super::app::Panel;
 
+/// How many columns a section header reserves for its expansion indicator.
+const INDICATOR_WIDTH: u16 = 2;
+
+/// The indicator of a collapsed section.
+const COLLAPSED_INDICATOR: &str = "▶";
+
+/// The indicator of an expanded section.
+const EXPANDED_INDICATOR: &str = "▼";
+
+/// The fill of a section header that does not hold the cursor.
+const HEADER_BACKGROUND: Color = Color::Yellow;
+
+/// The fill of a section header that holds the cursor.
+const HEADER_FOCUSED_BACKGROUND: Color = Color::LightYellow;
+
 /// Draws the four panels and, when it is open, the overlay.
 pub(crate) fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -61,44 +76,119 @@ fn render_panel(frame: &mut Frame, app: &App, area: Rect, panel: Panel) {
         .title_alignment(Alignment::Center)
         .border_style(panel_style(focused));
 
-    let lines = match panel {
-        Panel::DeviceSelection => device_lines(app),
-        Panel::StandbyCrates => control_lines(app),
-        _ => Vec::new(),
-    };
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let body = Paragraph::new(lines).block(block);
-    frame.render_widget(body, area);
-}
-
-/// Returns the control panel as rendered lines.
-fn control_lines(app: &App) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    for line in app.control().lines() {
-        lines.push(control_line(&line));
+    match panel {
+        Panel::DeviceSelection => {
+            let body = Paragraph::new(device_lines(app));
+            frame.render_widget(body, inner);
+        }
+        Panel::StandbyCrates => {
+            render_control(frame, app, inner);
+        }
+        _ => {}
     }
-    return lines;
 }
 
-/// Returns one styled control panel line.
-fn control_line(line: &ControlLine) -> Line<'static> {
+/// Draws the control sections inside the Standby Crates panel.
+///
+/// Every line occupies one row of the panel, so a section header can span the
+/// full width on its own.
+fn render_control(frame: &mut Frame, app: &App, area: Rect) {
+    let bottom = area.y.saturating_add(area.height);
+
+    let mut y = area.y;
+    for line in app.control().lines() {
+        if y >= bottom {
+            return;
+        }
+        let row = Rect::new(area.x, y, area.width, 1);
+        render_control_line(frame, row, &line);
+        y = y.saturating_add(1);
+    }
+}
+
+/// Draws one line of the control panel.
+fn render_control_line(frame: &mut Frame, row: Rect, line: &ControlLine) {
+    if line.is_header() {
+        render_control_header(frame, row, line);
+        return;
+    }
+
     let marker = if line.is_focused() {
         "> "
     } else {
         "  "
     };
+    let body = Paragraph::new(format!("{marker}{}", line.text()))
+        .style(control_content_style(line));
+    frame.render_widget(body, row);
+}
 
+/// Draws a section header as a filled block that spans the whole row.
+///
+/// The fill is drawn first, then the title is centered over the full width,
+/// and last the indicator is drawn in the columns reserved for it, so the
+/// indicator never shifts the title.
+fn render_control_header(frame: &mut Frame, row: Rect, line: &ControlLine) {
+    let style = header_style(line.is_focused());
+    frame.render_widget(Block::new().style(style), row);
+
+    let title =
+        Paragraph::new(line.text()).alignment(Alignment::Center).style(style);
+    frame.render_widget(title, row);
+
+    let indicator = if line.is_expanded() {
+        EXPANDED_INDICATOR
+    } else {
+        COLLAPSED_INDICATOR
+    };
+    let indicator_area = match right_edge(row, INDICATOR_WIDTH) {
+        Some(indicator_area) => indicator_area,
+        None => return,
+    };
+    let indicator = Paragraph::new(format!("{indicator} "))
+        .alignment(Alignment::Right)
+        .style(style);
+    frame.render_widget(indicator, indicator_area);
+}
+
+/// Returns the style of an entry or status line.
+fn control_content_style(line: &ControlLine) -> Style {
     let style = if line.is_focused() {
         Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-    } else if line.is_header() {
-        Style::new().add_modifier(Modifier::BOLD)
     } else if line.is_status() {
         Style::new().fg(Color::DarkGray)
     } else {
         Style::new()
     };
+    return style;
+}
 
-    return Line::styled(format!("{marker}{}", line.text()), style);
+/// Returns the style of a section header.
+///
+/// Every header uses the same yellow-toned fill; the header that holds the
+/// cursor uses the brighter tone, so the focus stays visible without changing
+/// the design of the header.
+fn header_style(focused: bool) -> Style {
+    let background = if focused {
+        HEADER_FOCUSED_BACKGROUND
+    } else {
+        HEADER_BACKGROUND
+    };
+    let style = Style::new()
+        .fg(Color::Black)
+        .bg(background)
+        .add_modifier(Modifier::BOLD);
+    return style;
+}
+
+/// Returns the rightmost columns of a row, if the row is wide enough.
+fn right_edge(row: Rect, width: u16) -> Option<Rect> {
+    let start = row.width.checked_sub(width)?;
+    let area = Rect::new(row.x.saturating_add(start), row.y, width, 1);
+    return Some(area);
 }
 
 /// Returns the device list as rendered lines.

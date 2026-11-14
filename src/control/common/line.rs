@@ -6,7 +6,10 @@ use super::entry::ControlEntry;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Kind {
     /// The header of a section.
-    Header,
+    Header {
+        /// Whether the section below the header is expanded.
+        expanded: bool,
+    },
     /// One entry of an expanded section.
     Entry,
     /// An informational message.
@@ -16,7 +19,9 @@ enum Kind {
 /// One line of the Standby Crates panel.
 ///
 /// Lines describe what to show, not how to style it, so the terminal layer can
-/// pick its own colours and markers.
+/// pick its own colours, markers, and expansion indicators. The text of a
+/// header is its title alone: the indicator is a rendering decision that must
+/// not influence the title layout.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ControlLine {
@@ -28,14 +33,11 @@ pub struct ControlLine {
 impl ControlLine {
     /// Builds the header line of a section.
     pub(crate) fn header(title: &str, expanded: bool, focused: bool) -> Self {
-        let marker = if expanded {
-            "▾"
-        } else {
-            "▸"
-        };
         let line = Self {
-            text: format!("{title} {marker}"),
-            kind: Kind::Header,
+            text: String::from(title),
+            kind: Kind::Header {
+                expanded,
+            },
             focused,
         };
         return line;
@@ -62,13 +64,28 @@ impl ControlLine {
     }
 
     /// Returns the text of the line.
+    ///
+    /// For a header this is the section title, without the indicator.
     pub fn text(&self) -> &str {
         return self.text.as_str();
     }
 
     /// Returns `true` when the line is the header of a section.
     pub fn is_header(&self) -> bool {
-        return self.kind == Kind::Header;
+        return matches!(self.kind, Kind::Header { .. });
+    }
+
+    /// Returns `true` when the section of this header is expanded.
+    ///
+    /// Entry and status lines always report `false`.
+    pub fn is_expanded(&self) -> bool {
+        let expanded = match self.kind {
+            Kind::Header {
+                expanded,
+            } => expanded,
+            _ => false,
+        };
+        return expanded;
     }
 
     /// Returns `true` when the line is an informational message.
