@@ -3,6 +3,7 @@
 use std::thread;
 use std::time::Duration;
 
+use bloatdroid::control::ControlLine;
 use bloatdroid::control::ControlPanel;
 use bloatdroid::control::ControlTarget;
 
@@ -118,4 +119,19 @@ pub fn focused_text(panel: &ControlPanel) -> Option<String> {
         }
     }
     return None;
+}
+
+/// Returns the lines of the control strip that stays at the bottom.
+pub fn overlay_lines(panel: &ControlPanel) -> Vec<ControlLine> {
+    return panel.overlay_lines();
+}
+
+/// Returns `true` when the control strip holds the cursor.
+pub fn overlay_is_focused(panel: &ControlPanel) -> bool {
+    for line in panel.overlay_lines() {
+        if line.is_focused() {
+            return true;
+        }
+    }
+    return false;
 }

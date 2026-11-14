@@ -6,9 +6,9 @@
 //! actually does.
 //!
 //! The panel also owns what the sections share: the package inventory of the
-//! selected device, which is read once and handed to every section, and the
-//! scroll position, which keeps the cursor inside the visible area of the
-//! terminal.
+//! selected device, which is read once and handed to every section, the scroll
+//! position, which keeps the cursor inside the visible area of the terminal,
+//! and the control strip that stays at the bottom of the panel.
 
 use std::io;
 
@@ -30,6 +30,7 @@ use super::common::inventory::InventoryOutcome;
 use super::common::inventory::InventoryTask;
 use super::doze::DozeSection;
 use super::inactive::InactiveSection;
+use super::overlay::Overlay;
 
 /// The message shown for an expanded section without entries.
 const NO_ENTRIES: &str = "no applications";
@@ -52,6 +53,8 @@ enum Slot {
         /// The position of the entry inside the section.
         entry: usize,
     },
+    /// The control strip at the bottom of the panel.
+    Overlay,
 }
 
 /// The four control sections shown in the Standby Crates panel.
@@ -60,6 +63,7 @@ pub struct ControlPanel {
     sections: Vec<Box<dyn ControlSection>>,
     cursor: Slot,
     target: Option<ControlTarget>,
+    overlay: Overlay,
     client: AdbClient,
     inventory: Inventory,
     inventory_requested: bool,
@@ -83,6 +87,7 @@ impl ControlPanel {
             sections,
             cursor: Slot::Header(Section::Buckets),
             target: None,
+            overlay: Overlay::new(),
             client,
             inventory: Inventory::Absent,
             inventory_requested: false,
@@ -126,18 +131,20 @@ impl ControlPanel {
 
     /// Reads the installed packages of the selected device again.
     ///
-    /// Every section rescans its own state against the new list. Returns
-    /// `true` when the panel changed.
+    /// The control strip decides whether system applications are part of the
+    /// list, so toggling it and refreshing on request share this path. Every
+    /// section rescans its own state against the new list. Returns `true` when
+    /// the panel changed.
     pub fn refresh_inventory(&mut self) -> bool {
         self.inventory_requested = false;
         return self.request_inventory();
     }
 
-    /// Tells the panel how many lines fit into the visible area.
+    /// Tells the panel how many lines the sections have room for.
     ///
-    /// The renderer calls this with the height of the Standby Crates panel, so
-    /// the scroll position follows the terminal size. Returns `true` when the
-    /// visible lines changed.
+    /// The renderer calls this with the rows of the Standby Crates panel that
+    /// the control strip does not take, so the scroll position follows the
+    /// terminal size. Returns `true` when the visible lines changed.
     pub fn set_viewport(&mut self, height: usize) -> bool {
         let previous = self.viewport;
         self.viewport = Some(height);
@@ -147,16 +154,16 @@ impl ControlPanel {
 
     /// Handles a key press while the panel has focus.
     ///
-    /// `SPACE` expands or collapses the focused section, the arrows move the
-    /// cursor and change the value of the selected entry. Returns `true` when
-    /// the panel changed.
+    /// `SPACE` expands or collapses the focused section, or toggles the focused
+    /// control of the strip, and the arrows move the cursor and change the
+    /// value of the selected entry. Returns `true` when the panel changed.
     pub fn handle_key(&mut self, key: KeyCode) -> bool {
         let mut changed = self.normalize_cursor();
 
         let handled = match key {
             KeyCode::Up => self.move_up(),
             KeyCode::Down => self.move_down(),
-            KeyCode::Char(' ') => self.toggle_focused_section(),
+            KeyCode::Char(' ') => self.activate(),
             KeyCode::Left | KeyCode::Right => self.handle_entry_key(key),
             _ => false,
         };
@@ -205,6 +212,14 @@ impl ControlPanel {
             changed = true;
         }
         return changed;
+    }
+
+    /// Returns the lines of the control strip that stays at the bottom.
+    ///
+    /// The strip is not part of [`ControlPanel::lines`], so the scrolling
+    /// content never moves it and never draws over it.
+    pub fn overlay_lines(&self) -> Vec<ControlLine> {
+        return self.overlay.lines(self.cursor == Slot::Overlay);
     }
 
     /// Returns the lines that belong to the visible area of the panel.
@@ -342,7 +357,11 @@ impl ControlPanel {
         };
 
         self.inventory_requested = true;
-        let task = InventoryTask::load(self.client.clone(), serial);
+        let task = InventoryTask::load(
+            self.client.clone(),
+            serial,
+            self.overlay.show_system(),
+        );
         if self.inventory_worker.submit(task).is_err() {
             let message = String::from(INVENTORY_STATUS);
             return self.publish_inventory(Inventory::Failed(message));
@@ -352,12 +371,15 @@ impl ControlPanel {
 
     /// Turns an inventory outcome into the inventory to publish.
     ///
-    /// The outcome of a device that is no longer selected is dropped, so an
-    /// answer from an old device never replaces the inventory of the current
-    /// one.
+    /// The outcome of a device that is no longer selected, and the outcome of a
+    /// request with the other system application setting, are dropped, so an
+    /// answer that no longer fits the panel never replaces what is shown.
     fn inventory_after(&self, outcome: InventoryOutcome) -> Option<Inventory> {
         let serial = self.target.as_ref()?.serial.as_str();
         if outcome.serial() != serial {
+            return None;
+        }
+        if outcome.include_system() != self.overlay.show_system() {
             return None;
         }
 
@@ -419,9 +441,28 @@ impl ControlPanel {
         return self.focus(target);
     }
 
+    /// Handles `SPACE` for whatever holds the cursor.
+    ///
+    /// On the control strip it toggles the focused control and reads the
+    /// package inventory again, because the strip decides which applications
+    /// the sections list.
+    fn activate(&mut self) -> bool {
+        if self.cursor != Slot::Overlay {
+            return self.toggle_focused_section();
+        }
+        if !self.overlay.toggle() {
+            return false;
+        }
+        self.refresh_inventory();
+        return true;
+    }
+
     /// Expands or collapses the section that holds the cursor.
     fn toggle_focused_section(&mut self) -> bool {
-        let section = self.cursor_section();
+        let section = match self.cursor_section() {
+            Some(section) => section,
+            None => return false,
+        };
         let control = match self.find_mut(section) {
             Some(control) => control,
             None => return false,
@@ -441,7 +482,7 @@ impl ControlPanel {
                 section,
                 entry,
             } => (section, entry),
-            Slot::Header(_) => return false,
+            Slot::Header(_) | Slot::Overlay => return false,
         };
 
         let entry = match self.entry_copy(section, index) {
@@ -473,6 +514,7 @@ impl ControlPanel {
                 });
             }
         }
+        slots.push(Slot::Overlay);
 
         return slots;
     }
@@ -484,8 +526,11 @@ impl ControlPanel {
             return false;
         }
 
-        let header = Slot::Header(self.cursor_section());
-        return self.focus(header);
+        let section = match self.cursor_section() {
+            Some(section) => section,
+            None => return false,
+        };
+        return self.focus(Slot::Header(section));
     }
 
     /// Keeps the cursor on the same entry after the entries changed.
@@ -495,7 +540,7 @@ impl ControlPanel {
                 section,
                 entry,
             } => (section, entry),
-            Slot::Header(_) => return false,
+            Slot::Header(_) | Slot::Overlay => return false,
         };
 
         let count = self.entry_count(section);
@@ -526,7 +571,7 @@ impl ControlPanel {
                 section,
                 entry,
             } => (section, entry),
-            Slot::Header(_) => return None,
+            Slot::Header(_) | Slot::Overlay => return None,
         };
 
         let control = self.find(section)?;
@@ -534,16 +579,17 @@ impl ControlPanel {
         return Some(entry.identifier.clone());
     }
 
-    /// Returns the section the cursor belongs to.
-    fn cursor_section(&self) -> Section {
+    /// Returns the section the cursor belongs to, if it belongs to one.
+    fn cursor_section(&self) -> Option<Section> {
         let section = match self.cursor {
             Slot::Header(section) => section,
             Slot::Entry {
                 section,
                 ..
             } => section,
+            Slot::Overlay => return None,
         };
-        return section;
+        return Some(section);
     }
 
     /// Returns a copy of one entry of a section.

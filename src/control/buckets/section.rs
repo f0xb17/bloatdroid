@@ -75,6 +75,9 @@ impl BucketsSection {
     }
 
     /// Moves the selected application one bucket further.
+    ///
+    /// An application whose bucket the device did not report, and one whose
+    /// bucket is read-only, are left exactly as they are.
     fn change_bucket(&mut self, entry: &ControlEntry, step: Step) -> bool {
         if self.pending.is_some() {
             return false;
@@ -84,8 +87,20 @@ impl BucketsSection {
             Some(serial) => serial,
             None => return false,
         };
-        let bucket = match self.target_bucket(&entry.value, step) {
-            Some(bucket) => bucket,
+        let current = match StandbyBucket::from_name(&entry.value) {
+            Some(current) => current,
+            None => return false,
+        };
+        if !current.is_modifiable() {
+            return false;
+        }
+
+        let target = match step {
+            Step::Previous => self.support.previous(current),
+            Step::Next => self.support.next(current),
+        };
+        let target = match target {
+            Some(target) => target,
             None => return false,
         };
 
@@ -93,7 +108,7 @@ impl BucketsSection {
             self.client.clone(),
             serial,
             entry.identifier.clone(),
-            String::from(bucket.name()),
+            target,
         );
         if self.worker.submit(task).is_err() {
             return self.state.set_status(Some(String::from(WORKER_STATUS)));
@@ -106,31 +121,10 @@ impl BucketsSection {
         self.pending = Some(pending);
 
         let mut changed = self.state.set_status(None);
-        if self.state.set_entry_value(&entry.identifier, bucket.name()) {
+        if self.state.set_entry_value(&entry.identifier, target.name()) {
             changed = true;
         }
         return changed;
-    }
-
-    /// Returns the bucket that a step leads to from the current value.
-    ///
-    /// An application whose bucket the device did not report is moved into the
-    /// most active bucket, which every device accepts.
-    fn target_bucket(
-        &self,
-        current: &str,
-        step: Step,
-    ) -> Option<StandbyBucket> {
-        let bucket = match StandbyBucket::from_name(current) {
-            Some(bucket) => bucket,
-            None => return Some(StandbyBucket::Active),
-        };
-
-        let target = match step {
-            Step::Previous => self.support.previous(bucket),
-            Step::Next => self.support.next(bucket),
-        };
-        return target;
     }
 
     /// Hands a load task to the worker thread.
@@ -172,7 +166,7 @@ impl BucketsSection {
                 bucket,
                 ..
             } => {
-                return self.apply_change(&package, &bucket);
+                return self.apply_change(&package, bucket);
             }
             BucketOutcome::ChangeFailed {
                 package,
@@ -205,10 +199,10 @@ impl BucketsSection {
     }
 
     /// Shows a verified bucket change.
-    fn apply_change(&mut self, package: &str, bucket: &str) -> bool {
+    fn apply_change(&mut self, package: &str, bucket: StandbyBucket) -> bool {
         self.pending = None;
 
-        let mut changed = self.state.set_entry_value(package, bucket);
+        let mut changed = self.state.set_entry_value(package, bucket.name());
         if self.state.set_status(None) {
             changed = true;
         }

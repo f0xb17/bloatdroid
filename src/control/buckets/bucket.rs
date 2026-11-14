@@ -1,10 +1,15 @@
 //! The Android standby buckets and the ones a device accepts.
 
-/// A standard Android standby bucket, ordered from the most to the least
-/// active.
+/// A standard Android standby bucket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum StandbyBucket {
+    /// Android exempted the application from the bucket restrictions.
+    ///
+    /// The system assigns this bucket; a user cannot move an application into
+    /// it, so it is shown and never changed. It says nothing about whether the
+    /// application is a system application, which is a separate question.
+    Exempted,
     /// The application is in active use.
     Active,
     /// The application ran recently or is used regularly.
@@ -20,8 +25,12 @@ pub enum StandbyBucket {
 }
 
 impl StandbyBucket {
-    /// Every bucket, in the order Android ranks them.
-    pub const ALL: [StandbyBucket; 5] = [
+    /// The buckets a user can move an application into, from the most to the
+    /// least active.
+    ///
+    /// [`StandbyBucket::Exempted`] is missing on purpose: it is read-only, so
+    /// cycling never targets it.
+    pub const MODIFIABLE: [StandbyBucket; 5] = [
         StandbyBucket::Active,
         StandbyBucket::WorkingSet,
         StandbyBucket::Frequent,
@@ -29,9 +38,10 @@ impl StandbyBucket {
         StandbyBucket::Restricted,
     ];
 
-    /// Returns the value that ADB prints and accepts for this bucket.
+    /// Returns the name that ADB prints and accepts for this bucket.
     pub fn name(self) -> &'static str {
         let name = match self {
+            StandbyBucket::Exempted => "exempted",
             StandbyBucket::Active => "active",
             StandbyBucket::WorkingSet => "working_set",
             StandbyBucket::Frequent => "frequent",
@@ -41,9 +51,23 @@ impl StandbyBucket {
         return name;
     }
 
-    /// Reads a bucket from the value that ADB prints.
+    /// Returns the numeric bucket id that Android reports.
+    pub fn id(self) -> u32 {
+        let id = match self {
+            StandbyBucket::Exempted => 5,
+            StandbyBucket::Active => 10,
+            StandbyBucket::WorkingSet => 20,
+            StandbyBucket::Frequent => 30,
+            StandbyBucket::Rare => 40,
+            StandbyBucket::Restricted => 45,
+        };
+        return id;
+    }
+
+    /// Reads a bucket from the name that ADB prints.
     pub fn from_name(name: &str) -> Option<Self> {
         let bucket = match name {
+            "exempted" => StandbyBucket::Exempted,
             "active" => StandbyBucket::Active,
             "working_set" => StandbyBucket::WorkingSet,
             "frequent" => StandbyBucket::Frequent,
@@ -52,6 +76,43 @@ impl StandbyBucket {
             _ => return None,
         };
         return Some(bucket);
+    }
+
+    /// Reads a bucket from the numeric id that Android reports.
+    pub fn from_id(id: u32) -> Option<Self> {
+        let bucket = match id {
+            5 => StandbyBucket::Exempted,
+            10 => StandbyBucket::Active,
+            20 => StandbyBucket::WorkingSet,
+            30 => StandbyBucket::Frequent,
+            40 => StandbyBucket::Rare,
+            45 => StandbyBucket::Restricted,
+            _ => return None,
+        };
+        return Some(bucket);
+    }
+
+    /// Reads a bucket from what a device reports for one application.
+    ///
+    /// Android answers `am get-standby-bucket` with the name of the bucket on
+    /// some versions and with its numeric id on others, so both forms are
+    /// accepted. Anything else stays unknown instead of being rounded to a
+    /// valid bucket.
+    pub fn parse(value: &str) -> Option<Self> {
+        if let Some(bucket) = Self::from_name(value) {
+            return Some(bucket);
+        }
+
+        let id = match value.parse::<u32>() {
+            Ok(id) => id,
+            Err(_) => return None,
+        };
+        return Self::from_id(id);
+    }
+
+    /// Returns `true` when a user can move an application into this bucket.
+    pub fn is_modifiable(self) -> bool {
+        return self != StandbyBucket::Exempted;
     }
 }
 
@@ -92,7 +153,7 @@ impl BucketSupport {
     pub fn next(&self, bucket: StandbyBucket) -> Option<StandbyBucket> {
         let mut found = false;
 
-        for candidate in StandbyBucket::ALL {
+        for candidate in StandbyBucket::MODIFIABLE {
             if found && self.supports(candidate) {
                 return Some(candidate);
             }
@@ -107,7 +168,7 @@ impl BucketSupport {
     pub fn previous(&self, bucket: StandbyBucket) -> Option<StandbyBucket> {
         let mut previous = None;
 
-        for candidate in StandbyBucket::ALL {
+        for candidate in StandbyBucket::MODIFIABLE {
             if candidate == bucket {
                 return previous;
             }

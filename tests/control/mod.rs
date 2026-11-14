@@ -6,6 +6,7 @@ mod doze;
 mod harness;
 mod inactive;
 mod inventory;
+mod overlay;
 mod panel;
 mod scanning;
 mod scrolling;

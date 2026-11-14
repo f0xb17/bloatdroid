@@ -130,10 +130,11 @@ impl App {
         return &self.control;
     }
 
-    /// Tells the control panel how many lines the Standby Crates panel shows.
+    /// Tells the control panel how many rows its sections have.
     ///
-    /// The renderer calls this with the height it has room for, so the control
-    /// panel scrolls to keep the cursor visible whatever the terminal size is.
+    /// The renderer calls this with the height the sections have room for,
+    /// below the control strip, so the panel scrolls to keep the cursor visible
+    /// whatever the terminal size is.
     pub fn set_control_viewport(&mut self, height: usize) {
         if self.control.set_viewport(height) {
             self.redraw = true;

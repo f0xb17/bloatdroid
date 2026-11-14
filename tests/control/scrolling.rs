@@ -38,7 +38,7 @@ fn expect_load(mock: &MockAdb) {
         listing.push('\n');
     }
     mock.expect(
-        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
         MockResponse::output(listing),
     );
 

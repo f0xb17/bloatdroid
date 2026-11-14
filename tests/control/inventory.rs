@@ -29,7 +29,7 @@ fn expect_listing(mock: &MockAdb, serial: &str, applications: &[&str]) {
         listing.push('\n');
     }
     mock.expect(
-        &["-s", serial, "shell", "pm", "list", "packages"],
+        &["-s", serial, "shell", "pm", "list", "packages", "-3"],
         MockResponse::output(listing),
     );
 }
@@ -90,6 +90,7 @@ fn package_listings(mock: &MockAdb, serial: &str) -> usize {
         String::from("pm"),
         String::from("list"),
         String::from("packages"),
+        String::from("-3"),
     ];
 
     let mut count = 0;

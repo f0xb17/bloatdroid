@@ -29,7 +29,7 @@ fn expect_listing(mock: &MockAdb, serial: &str, packages: &[&str]) {
         listing.push('\n');
     }
     mock.expect(
-        &["-s", serial, "shell", "pm", "list", "packages"],
+        &["-s", serial, "shell", "pm", "list", "packages", "-3"],
         MockResponse::output(listing),
     );
 }
@@ -119,6 +119,7 @@ fn package_listings(mock: &MockAdb, serial: &str) -> usize {
         String::from("pm"),
         String::from("list"),
         String::from("packages"),
+        String::from("-3"),
     ];
 
     let mut count = 0;
@@ -332,7 +333,7 @@ fn loads_applications_sorted_by_package_name() {
 fn reports_package_listing_failures() {
     let mock = MockAdb::new();
     mock.expect(
-        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
         MockResponse::failure("error: device offline"),
     );
 
@@ -351,7 +352,7 @@ fn reports_package_listing_failures() {
 fn reports_whitelist_failures() {
     let mock = MockAdb::new();
     mock.expect(
-        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
         MockResponse::output("package:com.example.app\n"),
     );
     mock.expect(

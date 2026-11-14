@@ -68,15 +68,15 @@ fn lists_devices_with_their_details() {
 }
 
 #[test]
-fn lists_installed_packages_sorted() {
+fn lists_third_party_packages_sorted() {
     let mock = MockAdb::new();
     let listing = "package:com.example.bravo\npackage:com.example.alpha\n";
     mock.expect(
-        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
         MockResponse::output(listing),
     );
 
-    let packages = match list_packages(&mock.client(), SERIAL) {
+    let packages = match list_packages(&mock.client(), SERIAL, false) {
         Ok(packages) => packages,
         Err(error) => panic!("the package listing failed: {error}"),
     };
@@ -84,6 +84,28 @@ fn lists_installed_packages_sorted() {
     let expected = vec![
         String::from("com.example.alpha"),
         String::from("com.example.bravo"),
+    ];
+    assert_eq!(packages, expected);
+    mock.assert_complete();
+}
+
+#[test]
+fn lists_system_packages_on_request() {
+    let mock = MockAdb::new();
+    let listing = "package:com.example.app\npackage:com.android.systemui\n";
+    mock.expect(
+        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        MockResponse::output(listing),
+    );
+
+    let packages = match list_packages(&mock.client(), SERIAL, true) {
+        Ok(packages) => packages,
+        Err(error) => panic!("the package listing failed: {error}"),
+    };
+
+    let expected = vec![
+        String::from("com.android.systemui"),
+        String::from("com.example.app"),
     ];
     assert_eq!(packages, expected);
     mock.assert_complete();

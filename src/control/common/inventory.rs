@@ -3,7 +3,8 @@
 //! All four sections show the applications of the same device, so the panel
 //! reads the installed package list once and hands the same immutable list to
 //! every section. Nothing else asks the device for the package list, and the
-//! list is dropped as soon as the selected device changes.
+//! list is dropped as soon as the selected device or the system application
+//! filter changes.
 
 use std::sync::Arc;
 
@@ -39,6 +40,7 @@ pub enum Inventory {
 pub struct InventoryTask {
     client: AdbClient,
     serial: String,
+    include_system: bool,
 }
 
 /// The result of an [`InventoryTask`].
@@ -48,6 +50,8 @@ pub enum InventoryOutcome {
     Loaded {
         /// The device the packages belong to.
         serial: String,
+        /// Whether the system packages were part of the request.
+        include_system: bool,
         /// The installed packages, sorted by identifier.
         packages: PackageInventory,
     },
@@ -55,6 +59,8 @@ pub enum InventoryOutcome {
     Failed {
         /// The device the attempt was made on.
         serial: String,
+        /// Whether the system packages were part of the request.
+        include_system: bool,
         /// The failure, as shown to the user.
         message: String,
     },
@@ -62,10 +68,19 @@ pub enum InventoryOutcome {
 
 impl InventoryTask {
     /// Builds a task that reads the installed packages of one device.
-    pub fn load(client: AdbClient, serial: String) -> Self {
+    ///
+    /// `include_system` decides whether the system applications are part of
+    /// the list; without it the package manager only reports the applications
+    /// the user installed.
+    pub fn load(
+        client: AdbClient,
+        serial: String,
+        include_system: bool,
+    ) -> Self {
         let task = Self {
             client,
             serial,
+            include_system,
         };
         return task;
     }
@@ -86,17 +101,36 @@ impl InventoryOutcome {
         };
         return serial.as_str();
     }
+
+    /// Returns whether the request included the system applications.
+    pub fn include_system(&self) -> bool {
+        let include_system = match self {
+            InventoryOutcome::Loaded {
+                include_system,
+                ..
+            } => *include_system,
+            InventoryOutcome::Failed {
+                include_system,
+                ..
+            } => *include_system,
+        };
+        return include_system;
+    }
 }
 
 impl WorkerTask for InventoryTask {
     type Response = InventoryOutcome;
 
     fn execute(self) -> InventoryOutcome {
-        match list_packages(&self.client, &self.serial) {
+        let listed =
+            list_packages(&self.client, &self.serial, self.include_system);
+
+        match listed {
             Ok(packages) => {
                 let packages = PackageInventory::from(packages);
                 let outcome = InventoryOutcome::Loaded {
                     serial: self.serial,
+                    include_system: self.include_system,
                     packages,
                 };
                 return outcome;
@@ -105,6 +139,7 @@ impl WorkerTask for InventoryTask {
                 let message = format!("could not list applications: {error}");
                 let outcome = InventoryOutcome::Failed {
                     serial: self.serial,
+                    include_system: self.include_system,
                     message,
                 };
                 return outcome;

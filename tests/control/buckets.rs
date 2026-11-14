@@ -3,6 +3,7 @@
 use crossterm::event::KeyCode;
 
 use bloatdroid::control::ControlPanel;
+use bloatdroid::control::buckets::StandbyBucket;
 
 use crate::common::MockAdb;
 use crate::common::MockResponse;
@@ -27,7 +28,7 @@ fn expect_listing(mock: &MockAdb, applications: &[(&str, &str)]) {
         listing.push('\n');
     }
     mock.expect(
-        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
         MockResponse::output(listing),
     );
 }
@@ -296,10 +297,9 @@ fn reverts_changes_that_fail() {
 }
 
 #[test]
-fn reports_unreadable_buckets_and_starts_at_active() {
+fn reports_unreadable_buckets_and_leaves_them_alone() {
     let mock = MockAdb::new();
     expect_load(&mock, &[("com.example.app", "")]);
-    expect_bucket_write(&mock, "com.example.app", "active");
 
     let mut panel = panel_for(&mock, ANDROID_13);
     expand_buckets(&mut panel);
@@ -309,11 +309,12 @@ fn reports_unreadable_buckets_and_starts_at_active() {
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("could not be read"));
 
+    // An unknown bucket has no neighbour to move to, and it is never rounded
+    // to a valid one.
     focus_first_application(&mut panel);
-    assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    assert!(!panel.handle_key(KeyCode::Right));
+    assert!(!panel.handle_key(KeyCode::Left));
 
-    let expected = vec![String::from("com.example.app  (active)")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -322,7 +323,7 @@ fn reports_unreadable_buckets_and_starts_at_active() {
 fn reports_listing_failures() {
     let mock = MockAdb::new();
     mock.expect(
-        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
         MockResponse::failure("error: device offline"),
     );
 
@@ -373,6 +374,230 @@ fn keeps_the_selected_application_after_an_inventory_refresh() {
     wait_for_rows(&mut panel, 4);
 
     assert_eq!(focused_row(&panel), "com.example.charlie  (active)");
+    mock.assert_complete();
+}
+
+#[test]
+fn parses_textual_and_numeric_buckets() {
+    let expected = [
+        ("exempted", StandbyBucket::Exempted, 5),
+        ("active", StandbyBucket::Active, 10),
+        ("working_set", StandbyBucket::WorkingSet, 20),
+        ("frequent", StandbyBucket::Frequent, 30),
+        ("rare", StandbyBucket::Rare, 40),
+        ("restricted", StandbyBucket::Restricted, 45),
+    ];
+
+    for (name, bucket, id) in expected {
+        let number = id.to_string();
+
+        assert_eq!(StandbyBucket::from_name(name), Some(bucket));
+        assert_eq!(StandbyBucket::from_id(id), Some(bucket));
+        assert_eq!(StandbyBucket::parse(name), Some(bucket));
+        assert_eq!(StandbyBucket::parse(number.as_str()), Some(bucket));
+        assert_eq!(bucket.name(), name);
+        assert_eq!(bucket.id(), id);
+    }
+}
+
+#[test]
+fn keeps_values_that_are_not_buckets_unknown() {
+    let values = ["", "unknown", "ALLOW", "10x", "-10", "50", "0", "10 "];
+    for value in values {
+        assert_eq!(StandbyBucket::parse(value), None, "parsed {value:?}");
+    }
+
+    assert_eq!(StandbyBucket::from_id(15), None);
+    assert_eq!(StandbyBucket::from_name("exempt"), None);
+}
+
+#[test]
+fn treats_the_exempted_bucket_as_read_only() {
+    assert!(!StandbyBucket::Exempted.is_modifiable());
+    assert!(StandbyBucket::Active.is_modifiable());
+    assert!(StandbyBucket::Restricted.is_modifiable());
+
+    // The buckets a change can target never include the read-only one.
+    for bucket in StandbyBucket::MODIFIABLE {
+        assert_ne!(bucket, StandbyBucket::Exempted);
+    }
+}
+
+#[test]
+fn shows_numeric_buckets_as_their_names() {
+    let mock = MockAdb::new();
+    expect_load(
+        &mock,
+        &[
+            ("com.example.zulu", "45"),
+            ("com.example.alpha", "10"),
+            ("com.example.mike", "20"),
+        ],
+    );
+
+    let mut panel = panel_for(&mock, ANDROID_13);
+    expand_buckets(&mut panel);
+    wait_for_rows(&mut panel, 3);
+
+    let expected = vec![
+        String::from("com.example.alpha  (active)"),
+        String::from("com.example.mike  (working_set)"),
+        String::from("com.example.zulu  (restricted)"),
+    ];
+    assert_eq!(entry_texts(&panel), expected);
+    mock.assert_complete();
+}
+
+#[test]
+fn shows_the_exempted_bucket_and_leaves_it_alone() {
+    let mock = MockAdb::new();
+    expect_load(&mock, &[("com.example.app", "5")]);
+
+    let mut panel = panel_for(&mock, ANDROID_13);
+    expand_buckets(&mut panel);
+    wait_for_rows(&mut panel, 1);
+    focus_first_application(&mut panel);
+
+    let expected = vec![String::from("com.example.app  (exempted)")];
+    assert_eq!(entry_texts(&panel), expected);
+
+    // The bucket is read-only, so neither arrow asks the device for a change.
+    assert!(!panel.handle_key(KeyCode::Right));
+    assert!(!panel.handle_key(KeyCode::Left));
+
+    assert_eq!(entry_texts(&panel), expected);
+    assert!(status_texts(&panel).is_empty());
+    mock.assert_complete();
+}
+
+#[test]
+fn never_changes_a_bucket_it_does_not_understand() {
+    let mock = MockAdb::new();
+    expect_load(&mock, &[("com.example.app", "77")]);
+
+    let mut panel = panel_for(&mock, ANDROID_13);
+    expand_buckets(&mut panel);
+    wait_for_rows(&mut panel, 1);
+    focus_first_application(&mut panel);
+
+    let expected = vec![String::from("com.example.app  (unknown)")];
+    assert_eq!(entry_texts(&panel), expected);
+
+    assert!(!panel.handle_key(KeyCode::Right));
+    assert!(!panel.handle_key(KeyCode::Left));
+
+    assert_eq!(entry_texts(&panel), expected);
+    assert!(only_status(&panel).contains("1 applications could not be read"));
+    mock.assert_complete();
+}
+
+#[test]
+fn cycles_from_a_numeric_bucket() {
+    let mock = MockAdb::new();
+    expect_load(&mock, &[("com.example.app", "20")]);
+    mock.expect(
+        &[
+            "-s",
+            SERIAL,
+            "shell",
+            "am",
+            "set-standby-bucket",
+            "com.example.app",
+            "frequent",
+        ],
+        MockResponse::output(""),
+    );
+    // The device answers with the new bucket as a number.
+    mock.expect(
+        &["-s", SERIAL, "shell", "am", "get-standby-bucket", "com.example.app"],
+        MockResponse::output("30"),
+    );
+
+    let mut panel = panel_for(&mock, ANDROID_13);
+    expand_buckets(&mut panel);
+    wait_for_rows(&mut panel, 1);
+    focus_first_application(&mut panel);
+
+    assert!(panel.handle_key(KeyCode::Right));
+    wait_for_commands(&mut panel, &mock);
+
+    let expected = vec![String::from("com.example.app  (frequent)")];
+    assert_eq!(entry_texts(&panel), expected);
+    assert!(status_texts(&panel).is_empty());
+    mock.assert_complete();
+}
+
+#[test]
+fn reverts_when_the_device_reports_another_numeric_bucket() {
+    let mock = MockAdb::new();
+    expect_load(&mock, &[("com.example.app", "20")]);
+    mock.expect(
+        &[
+            "-s",
+            SERIAL,
+            "shell",
+            "am",
+            "set-standby-bucket",
+            "com.example.app",
+            "frequent",
+        ],
+        MockResponse::output(""),
+    );
+    // The device kept the active bucket instead of the requested one.
+    mock.expect(
+        &["-s", SERIAL, "shell", "am", "get-standby-bucket", "com.example.app"],
+        MockResponse::output("10"),
+    );
+
+    let mut panel = panel_for(&mock, ANDROID_13);
+    expand_buckets(&mut panel);
+    wait_for_rows(&mut panel, 1);
+    focus_first_application(&mut panel);
+
+    assert!(panel.handle_key(KeyCode::Right));
+    wait_for(&mut panel, |panel| {
+        return status_contains(panel, "kept");
+    });
+
+    let expected = vec![String::from("com.example.app  (working_set)")];
+    assert_eq!(entry_texts(&panel), expected);
+    assert!(only_status(&panel).contains("kept `active`"));
+    mock.assert_complete();
+}
+
+#[test]
+fn reverts_when_the_device_reports_no_bucket() {
+    let mock = MockAdb::new();
+    expect_load(&mock, &[("com.example.app", "10")]);
+    mock.expect(
+        &[
+            "-s",
+            SERIAL,
+            "shell",
+            "am",
+            "set-standby-bucket",
+            "com.example.app",
+            "working_set",
+        ],
+        MockResponse::output(""),
+    );
+    mock.expect(
+        &["-s", SERIAL, "shell", "am", "get-standby-bucket", "com.example.app"],
+        MockResponse::output(""),
+    );
+
+    let mut panel = panel_for(&mock, ANDROID_13);
+    expand_buckets(&mut panel);
+    wait_for_rows(&mut panel, 1);
+    focus_first_application(&mut panel);
+
+    assert!(panel.handle_key(KeyCode::Right));
+    wait_for(&mut panel, |panel| {
+        return status_contains(panel, "could not be read");
+    });
+
+    let expected = vec![String::from("com.example.app  (active)")];
+    assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
 

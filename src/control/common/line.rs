@@ -14,6 +14,11 @@ enum Kind {
     Entry,
     /// An informational message.
     Status,
+    /// A checkbox of the control strip at the bottom of the panel.
+    Checkbox {
+        /// Whether the checkbox is ticked.
+        checked: bool,
+    },
 }
 
 /// One line of the Standby Crates panel.
@@ -48,6 +53,18 @@ impl ControlLine {
         let line = Self {
             text: format!("{}  ({})", entry.identifier, entry.value),
             kind: Kind::Entry,
+            focused,
+        };
+        return line;
+    }
+
+    /// Builds the line of a checkbox.
+    pub(crate) fn checkbox(label: &str, checked: bool, focused: bool) -> Self {
+        let line = Self {
+            text: String::from(label),
+            kind: Kind::Checkbox {
+                checked,
+            },
             focused,
         };
         return line;
@@ -91,6 +108,24 @@ impl ControlLine {
     /// Returns `true` when the line is an informational message.
     pub fn is_status(&self) -> bool {
         return self.kind == Kind::Status;
+    }
+
+    /// Returns `true` when the line is a checkbox of the control strip.
+    pub fn is_checkbox(&self) -> bool {
+        return matches!(self.kind, Kind::Checkbox { .. });
+    }
+
+    /// Returns `true` when the checkbox of this line is ticked.
+    ///
+    /// Every other kind of line reports `false`.
+    pub fn is_checked(&self) -> bool {
+        let checked = match self.kind {
+            Kind::Checkbox {
+                checked,
+            } => checked,
+            _ => false,
+        };
+        return checked;
     }
 
     /// Returns `true` when the cursor is on this line.

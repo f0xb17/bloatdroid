@@ -5,6 +5,7 @@ use crate::control::common::ControlEntry;
 use crate::control::common::PackageInventory;
 use crate::control::common::WorkerTask;
 
+use super::bucket::StandbyBucket;
 use super::commands::get_standby_bucket;
 use super::commands::set_standby_bucket;
 use super::scan::read_buckets;
@@ -29,7 +30,7 @@ enum BucketOperation {
         /// The package to change.
         package: String,
         /// The bucket to move it into.
-        bucket: String,
+        bucket: StandbyBucket,
     },
 }
 
@@ -52,7 +53,7 @@ pub enum BucketOutcome {
         /// The package that was changed.
         package: String,
         /// The bucket the device reports after the change.
-        bucket: String,
+        bucket: StandbyBucket,
     },
     /// A bucket change failed or was not applied.
     ChangeFailed {
@@ -88,7 +89,7 @@ impl BucketTask {
         client: AdbClient,
         serial: String,
         package: String,
-        bucket: String,
+        bucket: StandbyBucket,
     ) -> Self {
         let operation = BucketOperation::Change {
             package,
@@ -138,7 +139,7 @@ impl WorkerTask for BucketTask {
                 package,
                 bucket,
             } => {
-                return change(&self.client, &self.serial, &package, &bucket);
+                return change(&self.client, &self.serial, &package, bucket);
             }
         }
     }
@@ -161,13 +162,17 @@ fn load(
 }
 
 /// Applies one bucket and verifies it by reading it back.
+///
+/// The bucket is read again and parsed, so a device that reports bucket ids
+/// instead of names confirms the change just as well, and a device that reports
+/// something else fails the verification instead of passing it.
 fn change(
     client: &AdbClient,
     serial: &str,
     package: &str,
-    bucket: &str,
+    bucket: StandbyBucket,
 ) -> BucketOutcome {
-    match set_standby_bucket(client, serial, package, bucket) {
+    match set_standby_bucket(client, serial, package, bucket.name()) {
         Ok(()) => {}
         Err(error) => {
             let message = format!("the device rejected the change: {error}");
@@ -175,23 +180,31 @@ fn change(
         }
     }
 
-    let actual = match get_standby_bucket(client, serial, package) {
-        Ok(actual) => actual,
+    let reported = match get_standby_bucket(client, serial, package) {
+        Ok(reported) => reported,
         Err(error) => {
             let message = format!("could not verify the change: {error}");
             return failure(serial, package, message);
         }
     };
+    let reported = match StandbyBucket::parse(&reported) {
+        Some(reported) => reported,
+        None => {
+            let message =
+                String::from("the bucket the device reports could not be read");
+            return failure(serial, package, message);
+        }
+    };
 
-    if actual != bucket {
-        let message = format!("the device kept `{actual}`");
+    if reported != bucket {
+        let message = format!("the device kept `{}`", reported.name());
         return failure(serial, package, message);
     }
 
     let outcome = BucketOutcome::Changed {
         serial: String::from(serial),
         package: String::from(package),
-        bucket: actual,
+        bucket: reported,
     };
     return outcome;
 }

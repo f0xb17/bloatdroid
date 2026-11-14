@@ -4,12 +4,22 @@ use super::client::AdbClient;
 use super::error::AdbError;
 
 /// Lists the packages installed on a device, sorted and without duplicates.
+///
+/// Without `include_system` the device only reports the packages that the user
+/// installed (`pm list packages -3`), which hides the system applications and
+/// leaves the filtering to the package manager. With `include_system` the
+/// system packages come along.
 pub fn list_packages(
     client: &AdbClient,
     serial: &str,
+    include_system: bool,
 ) -> Result<Vec<String>, AdbError> {
-    let output =
-        client.run(&["-s", serial, "shell", "pm", "list", "packages"])?;
+    let mut arguments = vec!["-s", serial, "shell", "pm", "list", "packages"];
+    if !include_system {
+        arguments.push("-3");
+    }
+
+    let output = client.run(&arguments)?;
     return Ok(parse_packages(&output));
 }
 
