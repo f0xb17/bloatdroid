@@ -1,20 +1,21 @@
-//! Locating and running the ADB executable.
+//! The client every ADB command runs through.
 
 use std::ffi::OsString;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
+use std::sync::Arc;
 
 use super::error::AdbError;
+use super::executable::ExecutableRunner;
+use super::runner::AdbRunner;
 
-/// Runs the ADB executable with explicit arguments.
+/// Runs ADB commands through an [`AdbRunner`].
 ///
-/// Arguments are passed to the process directly, never through a shell, so
-/// serial numbers and property names cannot be interpreted as shell input.
+/// The client knows nothing about processes: by default it runs the `adb`
+/// executable through an [`ExecutableRunner`], and a different runner can be
+/// supplied, for example to answer commands without a device.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct AdbClient {
-    executable: PathBuf,
+    runner: Arc<dyn AdbRunner>,
 }
 
 impl Default for AdbClient {
@@ -24,7 +25,7 @@ impl Default for AdbClient {
 }
 
 impl AdbClient {
-    /// Creates a client that looks up `adb` on `PATH`.
+    /// Creates a client that runs `adb` from `PATH`.
     pub fn new() -> Self {
         return Self::with_executable("adb");
     }
@@ -33,15 +34,18 @@ impl AdbClient {
     ///
     /// Use this when ADB is not on `PATH` or when `ADB` points elsewhere.
     pub fn with_executable(executable: impl Into<OsString>) -> Self {
-        let client = Self {
-            executable: PathBuf::from(executable.into()),
-        };
-        return client;
+        let runner = ExecutableRunner::new(executable);
+        return Self::with_runner(Arc::new(runner));
     }
 
-    /// Returns the executable this client runs.
-    pub fn executable(&self) -> &Path {
-        return self.executable.as_path();
+    /// Creates a client that runs commands through the given runner.
+    ///
+    /// This is the seam that lets tests run the application without a device.
+    pub fn with_runner(runner: Arc<dyn AdbRunner>) -> Self {
+        let client = Self {
+            runner,
+        };
+        return client;
     }
 
     /// Runs ADB with the given arguments and returns its standard output.
@@ -49,45 +53,6 @@ impl AdbClient {
     /// The command is waited for, so callers that must not block the user
     /// interface should run this from a worker thread.
     pub fn run(&self, arguments: &[&str]) -> Result<String, AdbError> {
-        let mut command = Command::new(&self.executable);
-        for argument in arguments {
-            command.arg(argument);
-        }
-
-        let output = match command.output() {
-            Ok(output) => output,
-            Err(error) => return Err(AdbError::Io(error)),
-        };
-
-        let label = self.label(arguments);
-        if !output.status.success() {
-            let stderr =
-                String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(AdbError::CommandFailed {
-                command: label,
-                status: output.status,
-                stderr,
-            });
-        }
-
-        let stdout = match String::from_utf8(output.stdout) {
-            Ok(stdout) => stdout,
-            Err(_) => {
-                return Err(AdbError::OutputNotUtf8 {
-                    command: label,
-                });
-            }
-        };
-        return Ok(stdout);
-    }
-
-    /// Builds a readable label for a command, used in error messages.
-    fn label(&self, arguments: &[&str]) -> String {
-        let mut label = self.executable.to_string_lossy().to_string();
-        for argument in arguments {
-            label.push(' ');
-            label.push_str(argument);
-        }
-        return label;
+        return self.runner.run(arguments);
     }
 }
