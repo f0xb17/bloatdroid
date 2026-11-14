@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+      - name: Install the latest stable Rust toolchain
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add --toolchain stable rustfmt clippy
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Run the test suite
+        run: cargo test --all-targets --all-features
+
+  test-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+      - name: Install the latest stable Rust toolchain
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add --toolchain stable rustfmt clippy
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Run the test suite
+        run: cargo test --all-targets --all-features
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+      - name: Install the latest stable Rust toolchain
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add --toolchain stable rustfmt clippy
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy with warnings denied
+        run: cargo clippy --all-targets --all-features -- -D warnings
