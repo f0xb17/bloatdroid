@@ -6,7 +6,7 @@
 //! - [`buckets`] manages Android standby buckets.
 //! - [`appops`] manages AppOps background execution restrictions.
 //! - [`inactive`] manages the Android application inactive state.
-//! - [`doze`] will manage the Doze whitelist.
+//! - [`doze`] manages the Doze whitelist.
 //!
 //! [`common`] holds what the areas share: the expandable section state, the
 //! background worker that keeps ADB off the interface thread, the

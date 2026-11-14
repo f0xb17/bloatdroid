@@ -2,6 +2,7 @@
 
 mod appops;
 mod buckets;
+mod doze;
 mod harness;
 mod inactive;
 mod panel;

@@ -19,6 +19,7 @@ use super::common::ControlSection;
 use super::common::ControlTarget;
 use super::common::Section;
 use super::common::SectionState;
+use super::doze::DozeSection;
 use super::inactive::InactiveSection;
 
 /// The message shown for an expanded section without entries.
@@ -52,8 +53,8 @@ impl ControlPanel {
         let sections: Vec<Box<dyn ControlSection>> = vec![
             Box::new(BucketsSection::new(client.clone())?),
             Box::new(AppOpsSection::new(client.clone())?),
-            Box::new(InactiveSection::new(client)?),
-            Box::new(SectionState::new(Section::Doze)),
+            Box::new(InactiveSection::new(client.clone())?),
+            Box::new(DozeSection::new(client)?),
         ];
 
         let panel = Self {
