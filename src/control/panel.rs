@@ -19,6 +19,7 @@ use super::common::ControlSection;
 use super::common::ControlTarget;
 use super::common::Section;
 use super::common::SectionState;
+use super::inactive::InactiveSection;
 
 /// The message shown for an expanded section without entries.
 const NO_ENTRIES: &str = "no applications";
@@ -50,8 +51,8 @@ impl ControlPanel {
     pub fn new(client: AdbClient) -> io::Result<Self> {
         let sections: Vec<Box<dyn ControlSection>> = vec![
             Box::new(BucketsSection::new(client.clone())?),
-            Box::new(AppOpsSection::new(client)?),
-            Box::new(SectionState::new(Section::Inactive)),
+            Box::new(AppOpsSection::new(client.clone())?),
+            Box::new(InactiveSection::new(client)?),
             Box::new(SectionState::new(Section::Doze)),
         ];
 

@@ -3,5 +3,6 @@
 mod appops;
 mod buckets;
 mod harness;
+mod inactive;
 mod panel;
 mod sections;
