@@ -9,4 +9,5 @@ pub mod adb;
 pub mod control;
 pub mod discover;
 pub mod log;
+pub mod remove;
 pub mod tui;
