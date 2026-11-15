@@ -89,6 +89,9 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App) {
     if app.overlay_is_open() {
         render_overlay(frame, app);
     }
+    if app.removal_confirmation_package().is_some() {
+        render_removal_confirmation(frame, app);
+    }
 }
 
 /// Draws a single panel, styled by whether it has focus.
@@ -112,7 +115,9 @@ fn render_panel(frame: &mut Frame, app: &mut App, area: Rect, panel: Panel) {
         Panel::Operations => {
             render_operations(frame, app, inner);
         }
-        _ => {}
+        Panel::RemovePackages => {
+            render_remove_packages(frame, app, inner);
+        }
     }
 }
 
@@ -180,6 +185,118 @@ fn render_filter_checkbox(frame: &mut Frame, row: Rect, app: &App) {
     let text = format!("{marker}{checkbox} {FILTER_LABEL}");
     let body = Paragraph::new(text).style(filter_style(focused));
     frame.render_widget(body, row);
+}
+
+/// How many rows the removal status takes in its panel.
+const REMOVAL_STATUS_HEIGHT: u16 = 1;
+
+/// Draws the packages that can be removed and the status of the removal.
+///
+/// The list scrolls just enough to keep the selection in view, and the status
+/// row keeps the last result or the removal in progress visible below it.
+fn render_remove_packages(frame: &mut Frame, app: &App, area: Rect) {
+    let list_height = area.height.saturating_sub(REMOVAL_STATUS_HEIGHT);
+    let list = Rect::new(area.x, area.y, area.width, list_height);
+    let status = Rect::new(
+        area.x,
+        area.y.saturating_add(list_height),
+        area.width,
+        REMOVAL_STATUS_HEIGHT,
+    );
+
+    render_removal_list(frame, app, list);
+    render_removal_status(frame, app, status);
+}
+
+/// Draws the package list of the Remove Packages panel.
+fn render_removal_list(frame: &mut Frame, app: &App, area: Rect) {
+    if let Some(message) = app.removal_placeholder() {
+        let body =
+            Paragraph::new(message).style(Style::new().fg(Color::DarkGray));
+        frame.render_widget(body, area);
+        return;
+    }
+
+    let packages = app.removal_packages();
+    let height = usize::from(area.height);
+    if height == 0 || packages.is_empty() {
+        return;
+    }
+
+    let selected = app.removal_selected_index();
+    let start = selected.saturating_add(1).saturating_sub(height);
+    let end = packages.len().min(start.saturating_add(height));
+
+    let mut y = area.y;
+    for index in start..end {
+        let package = match packages.get(index) {
+            Some(package) => package,
+            None => continue,
+        };
+        let marker = if index == selected {
+            "> "
+        } else {
+            "  "
+        };
+        let style = removal_package_style(index == selected, app);
+        let line = Line::from(format!("{marker}{package}"));
+        let row = Rect::new(area.x, y, area.width, 1);
+        frame.render_widget(Paragraph::new(line).style(style), row);
+        y = y.saturating_add(1);
+    }
+}
+
+/// Returns the style of one package row.
+///
+/// The selected package is emphasized only while the panel has the focus, so
+/// the mark of the selection stays recognizable without competing with the
+/// focused panel.
+fn removal_package_style(selected: bool, app: &App) -> Style {
+    if selected && app.remove_packages_are_focused() {
+        return Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    }
+    return Style::new();
+}
+
+/// Draws the status line of the Remove Packages panel.
+fn render_removal_status(frame: &mut Frame, app: &App, area: Rect) {
+    let status = match app.removal_status() {
+        Some(status) => status,
+        None => return,
+    };
+    let body = Paragraph::new(status).style(Style::new().fg(Color::DarkGray));
+    frame.render_widget(body, area);
+}
+
+/// Draws the confirmation that asks before a package is removed.
+///
+/// The confirmation names the package, states that the removal only affects the
+/// current Android user, and keeps the answer to one key press.
+fn render_removal_confirmation(frame: &mut Frame, app: &App) {
+    let package = match app.removal_confirmation_package() {
+        Some(package) => package,
+        None => return,
+    };
+
+    let area = centered_rect(frame.area());
+    frame.render_widget(Clear, area);
+
+    let lines = vec![
+        Line::from(format!("Uninstall {package}?")),
+        Line::from(""),
+        Line::from("The package is removed only for the current Android user."),
+        Line::from("If it is preinstalled, its APK stays in the system image."),
+        Line::from(""),
+        Line::from("[y] Confirm    [n] Cancel"),
+    ];
+    let block = Block::bordered()
+        .title("User-Level Uninstall")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(Color::Yellow));
+    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap {
+        trim: true,
+    });
+    frame.render_widget(paragraph, area);
 }
 
 /// Draws the expandable sections inside the Standby Crates panel.

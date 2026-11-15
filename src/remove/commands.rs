@@ -15,6 +15,9 @@
 
 use crate::discover::AndroidDevice;
 
+use super::package::RemovalPackage;
+use super::user::AndroidUser;
+
 /// The ADB argument that selects the device of a command.
 const DEVICE_ARGUMENT: &str = "-s";
 
@@ -93,4 +96,54 @@ impl RemovalCommand {
         }
         return arguments;
     }
+}
+
+/// Builds the command that asks the device for its active Android user.
+pub fn current_user_command(device: &AndroidDevice) -> RemovalCommand {
+    let arguments = ["shell", "am", "get-current-user"];
+    return RemovalCommand::for_device(device, &arguments);
+}
+
+/// Builds the command that uninstalls a package for one Android user.
+///
+/// The user is always named explicitly, so the Package Manager never falls back
+/// to a user that was not asked for. The package identifier stays one argument.
+pub fn uninstall_command(
+    device: &AndroidDevice,
+    package: &RemovalPackage,
+    user: AndroidUser,
+) -> RemovalCommand {
+    let user_id = user.argument();
+    let arguments = [
+        "shell",
+        "pm",
+        "uninstall",
+        "--user",
+        user_id.as_str(),
+        package.identifier(),
+    ];
+    return RemovalCommand::for_device(device, &arguments);
+}
+
+/// Builds the command that lists a package when it is installed for one user.
+///
+/// The Package Manager prints `package:<identifier>` for every match, so the
+/// answer tells whether the package is installed for that user. The identifier
+/// is passed as one argument and compared exactly when the answer is read.
+pub fn installed_command(
+    device: &AndroidDevice,
+    package: &RemovalPackage,
+    user: AndroidUser,
+) -> RemovalCommand {
+    let user_id = user.argument();
+    let arguments = [
+        "shell",
+        "pm",
+        "list",
+        "packages",
+        "--user",
+        user_id.as_str(),
+        package.identifier(),
+    ];
+    return RemovalCommand::for_device(device, &arguments);
 }

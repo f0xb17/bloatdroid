@@ -1,12 +1,14 @@
 //! Tests for the execution interface of package removal.
 //!
-//! The strategy below builds a command but never runs it, so the suite cannot
-//! remove a package even on a device.
+//! The strategy below only reports an outcome, so the suite cannot remove a
+//! package even on a device.
 
-use bloatdroid::remove::RemovalCommand;
+use bloatdroid::log::LogLevel;
+use bloatdroid::log::OperationLog;
 use bloatdroid::remove::RemovalError;
 use bloatdroid::remove::RemovalMethod;
 use bloatdroid::remove::RemovalOperation;
+use bloatdroid::remove::RemovalOutcome;
 use bloatdroid::remove::RemovalPackage;
 use bloatdroid::remove::RemovalRequest;
 use bloatdroid::remove::RemovalStrategy;
@@ -15,7 +17,10 @@ use bloatdroid::remove::validate;
 use super::harness::SERIAL;
 use super::harness::device;
 
-/// A strategy that only describes its command.
+/// The message the example strategy reports when it runs.
+const RAN: &str = "the example strategy ran";
+
+/// A strategy that only describes its removal.
 struct ExampleStrategy {
     method: RemovalMethod,
 }
@@ -25,9 +30,14 @@ impl RemovalStrategy for ExampleStrategy {
         return self.method;
     }
 
-    fn command(&self, request: &RemovalRequest) -> RemovalCommand {
-        let arguments = ["shell", "example", request.package().identifier()];
-        return RemovalCommand::for_device(request.device(), &arguments);
+    fn run(
+        &self,
+        request: &RemovalRequest,
+        log: &OperationLog,
+    ) -> RemovalOutcome {
+        let message = format!("{RAN} for {}", request.package().identifier());
+        log.record(LogLevel::Info, message);
+        return RemovalOutcome::Removed;
     }
 }
 
@@ -67,17 +77,18 @@ fn associates_an_operation_with_its_device_and_package() {
 }
 
 #[test]
-fn builds_the_command_of_its_strategy() {
+fn runs_the_strategy_with_the_operations_log() {
     let method = RemovalMethod::SystemPackage;
     let operation = match operation(method, method) {
         Ok(operation) => operation,
         Err(error) => panic!("the operation was rejected: {error}"),
     };
+    let log = OperationLog::new();
 
-    assert_eq!(
-        operation.command().as_adb_arguments(),
-        vec!["-s", SERIAL, "shell", "example", "com.example.app"]
-    );
+    let outcome = operation.run(&log);
+
+    assert!(outcome.is_removed());
+    assert!(log_has(&log, "the example strategy ran for com.example.app"));
 }
 
 #[test]
@@ -92,4 +103,14 @@ fn refuses_a_strategy_of_another_method() {
         Err(error) => panic!("the wrong error was reported: {error}"),
         Ok(_) => panic!("a mismatched strategy was accepted"),
     }
+}
+
+/// Returns whether the log holds a message with the given fragment.
+fn log_has(log: &OperationLog, fragment: &str) -> bool {
+    for entry in log.snapshot() {
+        if entry.message().contains(fragment) {
+            return true;
+        }
+    }
+    return false;
 }

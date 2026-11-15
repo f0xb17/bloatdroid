@@ -114,6 +114,15 @@ impl ControlPanel {
         return Arc::clone(&self.log);
     }
 
+    /// Returns the application inventory of the selected device.
+    ///
+    /// Every feature that lists applications shows the same list, so the
+    /// inventory is read once per device and filter setting and shared instead
+    /// of being read again.
+    pub fn inventory(&self) -> &Inventory {
+        return &self.inventory;
+    }
+
     /// Points the panel at the device that the sections operate on.
     ///
     /// The inventory of the previous device is dropped immediately, so nothing

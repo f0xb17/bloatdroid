@@ -2,8 +2,13 @@
 //!
 //! The commands are values only: nothing here runs ADB or removes a package.
 
+use bloatdroid::remove::AndroidUser;
 use bloatdroid::remove::RemovalCommand;
 use bloatdroid::remove::RemovalMethod;
+use bloatdroid::remove::RemovalPackage;
+use bloatdroid::remove::commands::current_user_command;
+use bloatdroid::remove::commands::installed_command;
+use bloatdroid::remove::commands::uninstall_command;
 
 use super::harness::SERIAL;
 use super::harness::device;
@@ -51,4 +56,77 @@ fn names_each_removal_method_separately() {
     assert_ne!(RemovalMethod::UserUninstall, RemovalMethod::SystemPackage);
     assert_eq!(RemovalMethod::UserUninstall.name(), "user uninstall");
     assert_eq!(RemovalMethod::SystemPackage.name(), "system package removal");
+}
+
+#[test]
+fn asks_the_device_for_its_active_user() {
+    let device = device();
+    let command = current_user_command(&device);
+
+    assert_eq!(
+        command.as_adb_arguments(),
+        vec!["-s", SERIAL, "shell", "am", "get-current-user"]
+    );
+}
+
+#[test]
+fn names_the_user_and_the_package_of_an_uninstall() {
+    let device = device();
+    let package = RemovalPackage::new("com.example.app");
+    let command = uninstall_command(&device, &package, AndroidUser::new(42));
+
+    assert_eq!(
+        command.as_adb_arguments(),
+        vec![
+            "-s",
+            SERIAL,
+            "shell",
+            "pm",
+            "uninstall",
+            "--user",
+            "42",
+            "com.example.app",
+        ]
+    );
+}
+
+#[test]
+fn never_targets_user_zero_unless_the_device_reported_it() {
+    let device = device();
+    let package = RemovalPackage::new("com.example.app");
+    let command = uninstall_command(&device, &package, AndroidUser::new(7));
+
+    // The user is always the one that was read from the device.
+    assert!(command.arguments().contains(&String::from("7")));
+    assert!(!command.arguments().contains(&String::from("0")));
+}
+
+#[test]
+fn keeps_the_package_of_an_installation_check_separate() {
+    let device = device();
+    let package = RemovalPackage::new("com.example.app");
+    let command = installed_command(&device, &package, AndroidUser::new(10));
+
+    assert_eq!(
+        command.as_adb_arguments(),
+        vec![
+            "-s",
+            SERIAL,
+            "shell",
+            "pm",
+            "list",
+            "packages",
+            "--user",
+            "10",
+            "com.example.app",
+        ]
+    );
+}
+
+#[test]
+fn reports_the_android_user_as_the_package_manager_takes_it() {
+    let user = AndroidUser::new(10);
+
+    assert_eq!(user.id(), 10);
+    assert_eq!(user.argument(), "10");
 }

@@ -8,6 +8,7 @@ mod app;
 mod log_layout;
 mod operations;
 mod refresh;
+mod removal;
 mod render;
 
 pub use app::{App, Focus, Panel};
@@ -58,6 +59,7 @@ pub fn run() -> io::Result<()> {
         app.poll_discovery();
         app.poll_control();
         app.poll_operations();
+        app.poll_removal();
     }
 
     session.stop()?;

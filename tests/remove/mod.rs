@@ -8,4 +8,5 @@ mod execution;
 mod harness;
 mod package;
 mod result;
+mod uninstall;
 mod validation;

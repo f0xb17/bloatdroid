@@ -32,6 +32,8 @@ pub mod commands;
 pub mod execution;
 pub mod package;
 pub mod result;
+pub mod uninstall;
+pub mod user;
 pub mod validation;
 
 pub use commands::RemovalCommand;
@@ -42,6 +44,9 @@ pub use execution::RemovalStrategy;
 pub use package::RemovalPackage;
 pub use result::RemovalError;
 pub use result::RemovalOutcome;
+pub use uninstall::UserUninstall;
+pub use user::AndroidUser;
+pub use user::current_user;
 pub use validation::RemovalRequest;
 pub use validation::ValidationError;
 pub use validation::validate;

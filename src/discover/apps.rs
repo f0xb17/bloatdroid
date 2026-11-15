@@ -67,7 +67,7 @@ impl ApplicationFilter {
 /// The inventory belongs to one device and one filter setting. A device change
 /// drops it, and a filter change reads it again, so a list is never reused for a
 /// device or a setting it was not read for.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Inventory {
     /// No device is selected.

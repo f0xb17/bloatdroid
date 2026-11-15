@@ -18,6 +18,7 @@ use crate::log::OperationLog;
 use super::operations::OperationsPanel;
 use super::refresh::RefreshWorker;
 use super::refresh::ScanOutcome;
+use super::removal::RemovePackagesPanel;
 
 /// One of the four panels shown in the terminal interface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -118,6 +119,7 @@ pub struct App {
     discovery_error: Option<String>,
     filter: ApplicationFilter,
     control: ControlPanel,
+    remove: RemovePackagesPanel,
     log: Arc<OperationLog>,
     operations: OperationsPanel,
     refresh: RefreshWorker,
@@ -134,10 +136,11 @@ impl App {
     pub fn new(client: AdbClient) -> io::Result<Self> {
         let scanner = DeviceScanner::new(client.clone());
         let refresh = RefreshWorker::spawn(scanner, REFRESH_INTERVAL)?;
-        let control = ControlPanel::new(client)?;
+        let control = ControlPanel::new(client.clone())?;
 
         let log = control.log();
         let operations = OperationsPanel::new(Arc::clone(&log));
+        let remove = RemovePackagesPanel::new(client, Arc::clone(&log))?;
         let app = Self {
             focused: Focus::DeviceSelection,
             running: true,
@@ -147,6 +150,7 @@ impl App {
             discovery_error: None,
             filter: ApplicationFilter::new(),
             control,
+            remove,
             log,
             operations,
             refresh,
@@ -176,6 +180,12 @@ impl App {
     /// focus.
     pub fn crates_are_focused(&self) -> bool {
         return self.focused == Focus::StandbyCrates;
+    }
+
+    /// Returns `true` when the packages of the Remove Packages panel have
+    /// focus.
+    pub fn remove_packages_are_focused(&self) -> bool {
+        return self.focused == Focus::RemovePackages;
     }
 
     /// Returns `true` when system applications are part of every application
@@ -225,6 +235,42 @@ impl App {
         return &self.operations;
     }
 
+    /// Returns the packages listed in the Remove Packages panel.
+    pub fn removal_packages(&self) -> &[String] {
+        return self.remove.packages();
+    }
+
+    /// Returns the position of the package selected for removal.
+    pub fn removal_selected_index(&self) -> usize {
+        return self.remove.selected();
+    }
+
+    /// Returns the package selected for removal.
+    pub fn removal_selected_package(&self) -> Option<&str> {
+        return self.remove.selected_package();
+    }
+
+    /// Returns the package that waits for the removal confirmation.
+    pub fn removal_confirmation_package(&self) -> Option<&str> {
+        let confirmation = self.remove.confirmation()?;
+        return Some(confirmation.package.as_str());
+    }
+
+    /// Returns `true` while a removal runs in the background.
+    pub fn removal_is_running(&self) -> bool {
+        return self.remove.is_running();
+    }
+
+    /// Returns the status line of the Remove Packages panel.
+    pub fn removal_status(&self) -> Option<&str> {
+        return self.remove.status();
+    }
+
+    /// Returns the message shown while the panel cannot list packages.
+    pub(crate) fn removal_placeholder(&self) -> Option<&str> {
+        return self.remove.placeholder();
+    }
+
     /// Tells the Operations panel how much room its rows have.
     ///
     /// The renderer calls this with the width and height it drew the panel in,
@@ -269,6 +315,21 @@ impl App {
         if self.control.poll() {
             self.redraw = true;
         }
+        self.sync_remove_inventory();
+    }
+
+    /// Applies the removal work that finished in the background.
+    ///
+    /// A verified removal changed the installed packages, so the shared
+    /// inventory is read again and every application list follows.
+    pub fn poll_removal(&mut self) {
+        let changed = self.remove.poll();
+        if self.remove.take_inventory_refresh() {
+            self.control.refresh_inventory();
+        }
+        if changed {
+            self.redraw = true;
+        }
     }
 
     /// Applies the log entries that were recorded since the last check.
@@ -285,6 +346,11 @@ impl App {
     /// device information overlay while it is open, and to the focused part of
     /// the interface otherwise.
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if self.remove.confirmation().is_some() {
+            self.handle_removal_confirmation_key(key);
+            return;
+        }
+
         if self.overlay_open {
             self.handle_overlay_key(key);
             return;
@@ -459,7 +525,9 @@ impl App {
             Focus::DeviceSelectionFilter => {
                 self.handle_filter_key(key);
             }
-            Focus::RemovePackages => {}
+            Focus::RemovePackages => {
+                self.handle_remove_key(key);
+            }
             Focus::StandbyCrates => {
                 self.handle_control_key(key);
             }
@@ -497,6 +565,7 @@ impl App {
         self.log.record(LogLevel::Info, message);
 
         self.control.set_filter(self.filter);
+        self.sync_remove_inventory();
         self.redraw = true;
     }
 
@@ -507,10 +576,45 @@ impl App {
         }
     }
 
+    /// Handles a key press for the Remove Packages panel.
+    fn handle_remove_key(&mut self, key: KeyEvent) {
+        let device = self.selected_device().cloned();
+        if self.remove.handle_key(key.code, device.as_ref()) {
+            self.redraw = true;
+        }
+    }
+
+    /// Handles a key press while the removal confirmation is open.
+    ///
+    /// `ESC` cancels the confirmation instead of ending the application, and
+    /// only the confirmation keys reach the panel, so a removal is never
+    /// started by an ordinary key press.
+    fn handle_removal_confirmation_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('c')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.request_quit();
+            return;
+        }
+
+        let device = self.selected_device().cloned();
+        if self.remove.handle_key(key.code, device.as_ref()) {
+            self.redraw = true;
+        }
+    }
+
     /// Keeps the control panel pointed at the selected device.
     fn sync_control_target(&mut self) {
         let target = self.control_target();
         if self.control.set_target(target) {
+            self.redraw = true;
+        }
+        self.sync_remove_inventory();
+    }
+
+    /// Keeps the Remove Packages panel on the shared application inventory.
+    fn sync_remove_inventory(&mut self) {
+        if self.remove.set_inventory(self.control.inventory()) {
             self.redraw = true;
         }
     }

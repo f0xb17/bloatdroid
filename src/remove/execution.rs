@@ -3,16 +3,16 @@
 //! A validated request and the strategy of its method form a
 //! [`RemovalOperation`]: the unit that can be handed to a background worker,
 //! bound to exactly one device and one package. The module is independent of the
-//! terminal, so the interface can run an operation off its drawing thread and
-//! show progress as [`RemovalProgress`] arrives.
+//! terminal, so the interface can run an operation off its drawing thread.
 //!
-//! No removal method is implemented yet. Each method arrives as its own
-//! [`RemovalStrategy`], with its own command and its own verification, so an
-//! operation never assumes that a package or a device supports a method.
+//! Each removal method is its own [`RemovalStrategy`], with its own command and
+//! its own verification, so an operation never assumes that a package or a
+//! device supports a method. [`crate::remove::UserUninstall`] is the first
+//! strategy.
 
 use crate::discover::AndroidDevice;
+use crate::log::OperationLog;
 
-use super::commands::RemovalCommand;
 use super::commands::RemovalMethod;
 use super::package::RemovalPackage;
 use super::result::RemovalError;
@@ -22,8 +22,7 @@ use super::validation::RemovalRequest;
 /// One step of a removal operation, for progress reporting.
 ///
 /// The steps carry no removal work. A caller that runs an operation on a worker
-/// reports each step to the interface and to the Operations Log, so execution
-/// never waits for rendering.
+/// reports each step to the interface, so execution never waits for rendering.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RemovalProgress {
@@ -37,17 +36,24 @@ pub enum RemovalProgress {
 
 /// Performs one removal method.
 ///
-/// A strategy turns a validated request into the command of its method and, once
-/// a method is implemented, verifies what the device did. The interface is
-/// `Send + Sync`, so an operation can move to a background worker. A strategy
-/// that cannot handle a package or a device reports
+/// A strategy turns a validated request into the command of its method, verifies
+/// what the device did, and reports its lifecycle to the Operations Log. The
+/// interface is `Send + Sync`, so an operation can move to a background worker.
+/// A strategy that cannot handle a package or a device reports
 /// [`RemovalError::UnsupportedMethod`] instead of running a command.
 pub trait RemovalStrategy: Send + Sync {
     /// Returns the removal method this strategy performs.
     fn method(&self) -> RemovalMethod;
 
-    /// Builds the command that removes the package on the request's device.
-    fn command(&self, request: &RemovalRequest) -> RemovalCommand;
+    /// Removes the package of the request and verifies the result.
+    ///
+    /// Only the package and the device named by the request are touched, and a
+    /// successful command is never reported as a removal on its own.
+    fn run(
+        &self,
+        request: &RemovalRequest,
+        log: &OperationLog,
+    ) -> RemovalOutcome;
 }
 
 /// A validated request together with the strategy that performs it.
@@ -98,11 +104,8 @@ impl RemovalOperation {
         return self.request.method();
     }
 
-    /// Returns the command the operation would run on the device.
-    ///
-    /// Building the command does not run it; running it arrives with the
-    /// strategy of a method.
-    pub fn command(&self) -> RemovalCommand {
-        return self.strategy.command(&self.request);
+    /// Runs the operation and returns what the device did.
+    pub fn run(&self, log: &OperationLog) -> RemovalOutcome {
+        return self.strategy.run(&self.request, log);
     }
 }

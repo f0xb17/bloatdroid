@@ -27,6 +27,12 @@ fn keeps_every_failure_reason_apart() {
         RemovalError::PermissionDenied,
         RemovalError::UnsupportedMethod,
         RemovalError::Adb(AdbError::Io(io::Error::other("adb is missing"))),
+        RemovalError::Rejected {
+            reason: String::from("DELETE_FAILED_INTERNAL_ERROR"),
+        },
+        RemovalError::InvalidUser {
+            output: String::from("not-a-user"),
+        },
         RemovalError::VerificationFailed(String::from("the listing failed")),
         RemovalError::Failed(String::from("the device rejected the change")),
     ];
@@ -70,6 +76,21 @@ fn describes_every_failure_reason() {
     let failed =
         RemovalError::Failed(String::from("the device gave no reason"));
     assert!(failed.to_string().contains("the device gave no reason"));
+
+    let rejected = RemovalError::Rejected {
+        reason: String::from("DELETE_FAILED_INTERNAL_ERROR"),
+    };
+    assert!(rejected.to_string().contains("DELETE_FAILED_INTERNAL_ERROR"));
+
+    let missing_user = RemovalError::InvalidUser {
+        output: String::new(),
+    };
+    assert!(missing_user.to_string().contains("did not report"));
+
+    let invalid_user = RemovalError::InvalidUser {
+        output: String::from("not-a-user"),
+    };
+    assert!(invalid_user.to_string().contains("not-a-user"));
 }
 
 #[test]
@@ -78,6 +99,13 @@ fn exposes_the_adb_failure_as_the_source() {
         RemovalError::Adb(AdbError::Io(io::Error::other("adb is missing")));
     assert!(adb.source().is_some());
     assert!(RemovalError::PermissionDenied.source().is_none());
+    assert!(
+        RemovalError::Rejected {
+            reason: String::from("DELETE_FAILED_INTERNAL_ERROR"),
+        }
+        .source()
+        .is_none()
+    );
 }
 
 #[test]

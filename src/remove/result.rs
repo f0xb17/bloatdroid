@@ -62,6 +62,16 @@ pub enum RemovalError {
     UnsupportedMethod,
     /// ADB could not run the command or answered with a failure.
     Adb(AdbError),
+    /// The Package Manager rejected the request, with the reason it reported.
+    Rejected {
+        /// The reason the Package Manager reported.
+        reason: String,
+    },
+    /// The device did not report a usable active Android user.
+    InvalidUser {
+        /// The answer that was read instead of an identifier.
+        output: String,
+    },
     /// The removal could not be verified, with the reason.
     VerificationFailed(String),
     /// The operation failed for another reason.
@@ -81,6 +91,27 @@ impl fmt::Display for RemovalError {
             }
             RemovalError::Adb(error) => {
                 return write!(formatter, "{error}");
+            }
+            RemovalError::Rejected {
+                reason,
+            } => {
+                return write!(
+                    formatter,
+                    "the Package Manager rejected the request: {reason}"
+                );
+            }
+            RemovalError::InvalidUser {
+                output,
+            } => {
+                if output.is_empty() {
+                    return formatter.write_str(
+                        "the device did not report an Android user",
+                    );
+                }
+                return write!(
+                    formatter,
+                    "the device reported `{output}` instead of an Android user"
+                );
             }
             RemovalError::VerificationFailed(message) => {
                 return write!(

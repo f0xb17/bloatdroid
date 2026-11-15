@@ -33,6 +33,18 @@ pub fn device_in_state(state: &str) -> AndroidDevice {
     return scanned_device(state);
 }
 
+/// Discovers one online physical device and keeps its mock.
+///
+/// The returned mock still answers every command of the discovery, so a test
+/// adds the commands of its operation and asserts that nothing else ran.
+pub fn device_with_mock() -> (MockAdb, AndroidDevice) {
+    let mock = MockAdb::new();
+    expect_discovery(&mock, "device");
+    let device = scan(&mock);
+    mock.assert_complete();
+    return (mock, device);
+}
+
 /// Expects the commands of one device discovery.
 fn expect_discovery(mock: &MockAdb, state: &str) {
     let listing = format!(
@@ -59,10 +71,7 @@ fn expect_discovery(mock: &MockAdb, state: &str) {
 }
 
 /// Runs one discovery with the mock and returns its device.
-fn scanned_device(state: &str) -> AndroidDevice {
-    let mock = MockAdb::new();
-    expect_discovery(&mock, state);
-
+fn scan(mock: &MockAdb) -> AndroidDevice {
     let scanner = DeviceScanner::new(mock.client());
     let mut devices = match scanner.scan() {
         Ok(devices) => devices,
@@ -72,7 +81,14 @@ fn scanned_device(state: &str) -> AndroidDevice {
         Some(device) => device,
         None => panic!("the device discovery found no device"),
     };
+    return device;
+}
 
+/// Runs one discovery with a mock of its own.
+fn scanned_device(state: &str) -> AndroidDevice {
+    let mock = MockAdb::new();
+    expect_discovery(&mock, state);
+    let device = scan(&mock);
     mock.assert_complete();
     return device;
 }
