@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::thread;
 
+use chrono::Local;
 use crossterm::event::KeyCode;
 
 use bloatdroid::log::DEFAULT_CAPACITY;
@@ -109,6 +110,27 @@ fn records_an_entry_with_a_time_of_day() {
 
     assert_eq!(entry.level(), LogLevel::Info);
     assert_eq!(entry.message(), "Loading the application inventory.");
+}
+
+#[test]
+fn stamps_entries_with_the_local_clock() {
+    let before = Local::now().format("%H:%M:%S").to_string();
+
+    let log = OperationLog::new();
+    log.record(LogLevel::Info, "Local time.");
+
+    let after = Local::now().format("%H:%M:%S").to_string();
+
+    let entries = log.snapshot();
+    let entry = match entries.first() {
+        Some(entry) => entry,
+        None => panic!("the entry disappeared"),
+    };
+    let stamp = entry.timestamp();
+    assert!(
+        stamp == before || stamp == after,
+        "the entry is stamped with {stamp}, but the local clock read {before} or {after}"
+    );
 }
 
 #[test]

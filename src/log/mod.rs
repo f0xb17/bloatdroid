@@ -5,9 +5,10 @@
 //! bounded and thread-safe, so a control worker can report an event while the
 //! event loop reads the log, and neither side waits for an ADB command.
 //!
-//! A timestamp is the time of day in coordinated universal time (UTC): the
-//! standard library has no time zone support, and a time zone dependency would
-//! be more machinery than one log column is worth.
+//! A timestamp is the time of day on the clock of the user, so an entry reads
+//! the same as the terminal window next to it. The standard library has no time
+//! zone support, and the local offset cannot be derived from the system clock
+//! alone, so the offset comes from [`chrono`].
 
 mod entry;
 mod level;
@@ -20,20 +21,11 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
+
+use chrono::Local;
 
 /// How many entries a log keeps before it drops the oldest ones.
 pub const DEFAULT_CAPACITY: usize = 200;
-
-/// How many seconds a day has.
-const SECONDS_PER_DAY: u64 = 86_400;
-
-/// How many seconds an hour has.
-const SECONDS_PER_HOUR: u64 = 3_600;
-
-/// How many seconds a minute has.
-const SECONDS_PER_MINUTE: u64 = 60;
 
 /// The central Operations Log.
 ///
@@ -141,16 +133,12 @@ impl OperationLog {
     }
 }
 
-/// Returns the current time of day as `HH:MM:SS`.
+/// Returns the current local time of day as `HH:MM:SS`.
+///
+/// The offset, including the daylight saving rules of the system, comes from
+/// [`chrono::Local`]: the standard library only reports the instant, and the
+/// `time` crate refuses to report a local offset while worker threads run,
+/// which this application always has.
 fn current_timestamp() -> String {
-    let seconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(elapsed) => elapsed.as_secs(),
-        Err(_) => 0,
-    };
-    let time = seconds % SECONDS_PER_DAY;
-
-    let hours = time / SECONDS_PER_HOUR;
-    let minutes = time % SECONDS_PER_HOUR / SECONDS_PER_MINUTE;
-    let seconds = time % SECONDS_PER_MINUTE;
-    return format!("{hours:02}:{minutes:02}:{seconds:02}");
+    return Local::now().format("%H:%M:%S").to_string();
 }
