@@ -54,7 +54,7 @@ fn expect_load(mock: &MockAdb) {
 /// Returns the text of every visible line, in display order.
 fn visible_texts(panel: &ControlPanel) -> Vec<String> {
     let mut texts = Vec::new();
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         texts.push(line_text(&line));
     }
     return texts;

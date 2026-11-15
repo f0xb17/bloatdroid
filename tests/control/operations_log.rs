@@ -14,7 +14,6 @@ use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
 use super::harness::log_has;
-use super::harness::overlay_is_focused;
 use super::harness::panel_for;
 use super::harness::wait_for;
 use super::harness::wait_for_commands;
@@ -321,14 +320,7 @@ fn logs_the_system_application_filter() {
         return log_has(panel, LogLevel::Success, "Found 1 application.");
     });
 
-    // The control strip is the last row of the panel.
-    for _ in 0..20 {
-        if overlay_is_focused(&panel) {
-            break;
-        }
-        assert!(panel.handle_key(KeyCode::Down));
-    }
-    assert!(panel.handle_key(KeyCode::Char(' ')));
+    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
 
     wait_for(&mut panel, |panel| {
         return log_has(panel, LogLevel::Success, "Found 2 applications.");

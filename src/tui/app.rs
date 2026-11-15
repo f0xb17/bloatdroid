@@ -39,34 +39,73 @@ impl Panel {
         };
         return title;
     }
+}
 
-    /// Returns the panel that follows this one in focus order.
+/// One target of the global focus navigation.
+///
+/// The Standby Crates panel holds two of them: the control strip at its bottom
+/// and the expandable sections above it. They are separate targets, not
+/// separate panels: both stay inside the one bordered panel that the two share.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Focus {
+    /// Selects the Android device to operate on.
+    DeviceSelection,
+    /// Holds the packages that are queued for removal.
+    RemovePackages,
+    /// Holds the controls of the Standby Crates panel.
+    StandbyCratesOverlay,
+    /// Holds the expandable sections of the Standby Crates panel.
+    StandbyCratesContent,
+    /// Shows what the operations did.
+    Operations,
+}
+
+impl Focus {
+    /// Returns the focus target that follows this one.
     pub fn next(self) -> Self {
-        let next_panel = match self {
-            Panel::DeviceSelection => Panel::RemovePackages,
-            Panel::RemovePackages => Panel::Operations,
-            Panel::Operations => Panel::StandbyCrates,
-            Panel::StandbyCrates => Panel::DeviceSelection,
+        let next = match self {
+            Focus::DeviceSelection => Focus::RemovePackages,
+            Focus::RemovePackages => Focus::StandbyCratesOverlay,
+            Focus::StandbyCratesOverlay => Focus::StandbyCratesContent,
+            Focus::StandbyCratesContent => Focus::Operations,
+            Focus::Operations => Focus::DeviceSelection,
         };
-        return next_panel;
+        return next;
     }
 
-    /// Returns the panel that precedes this one in focus order.
+    /// Returns the focus target that precedes this one.
     pub fn previous(self) -> Self {
-        let previous_panel = match self {
-            Panel::DeviceSelection => Panel::StandbyCrates,
-            Panel::StandbyCrates => Panel::Operations,
-            Panel::Operations => Panel::RemovePackages,
-            Panel::RemovePackages => Panel::DeviceSelection,
+        let previous = match self {
+            Focus::DeviceSelection => Focus::Operations,
+            Focus::RemovePackages => Focus::DeviceSelection,
+            Focus::StandbyCratesOverlay => Focus::RemovePackages,
+            Focus::StandbyCratesContent => Focus::StandbyCratesOverlay,
+            Focus::Operations => Focus::StandbyCratesContent,
         };
-        return previous_panel;
+        return previous;
+    }
+
+    /// Returns the panel that shows this focus target.
+    ///
+    /// Both Standby Crates targets share one panel, so the panel looks focused
+    /// whichever of the two holds the focus.
+    pub fn panel(self) -> Panel {
+        let panel = match self {
+            Focus::DeviceSelection => Panel::DeviceSelection,
+            Focus::RemovePackages => Panel::RemovePackages,
+            Focus::StandbyCratesOverlay => Panel::StandbyCrates,
+            Focus::StandbyCratesContent => Panel::StandbyCrates,
+            Focus::Operations => Panel::Operations,
+        };
+        return panel;
     }
 }
 
 /// The application state that the event handling and the rendering share.
 #[non_exhaustive]
 pub struct App {
-    focused: Panel,
+    focused: Focus,
     running: bool,
     devices: Vec<AndroidDevice>,
     selected: Option<usize>,
@@ -85,7 +124,7 @@ impl App {
         let log = control.log();
         let operations = OperationsPanel::new(Arc::clone(&log));
         let app = Self {
-            focused: Panel::DeviceSelection,
+            focused: Focus::DeviceSelection,
             running: true,
             devices: Vec::new(),
             selected: None,
@@ -100,9 +139,21 @@ impl App {
         return app;
     }
 
-    /// Returns the panel that currently has focus.
-    pub fn focused(&self) -> Panel {
+    /// Returns the focus target that currently has focus.
+    pub fn focused(&self) -> Focus {
         return self.focused;
+    }
+
+    /// Returns `true` when the control strip of the Standby Crates panel has
+    /// focus.
+    pub fn overlay_is_focused(&self) -> bool {
+        return self.focused == Focus::StandbyCratesOverlay;
+    }
+
+    /// Returns `true` when the sections of the Standby Crates panel have
+    /// focus.
+    pub fn content_is_focused(&self) -> bool {
+        return self.focused == Focus::StandbyCratesContent;
     }
 
     /// Returns `true` for as long as the application should keep running.
@@ -372,19 +423,24 @@ impl App {
     /// Passes a key press to the focused panel.
     fn handle_panel_key(&mut self, key: KeyEvent) {
         match self.focused {
-            Panel::DeviceSelection => {
+            Focus::DeviceSelection => {
                 self.handle_device_selection_key(key);
                 self.sync_control_target();
             }
-            Panel::Operations => {
+            Focus::StandbyCratesOverlay => {
+                if self.control.handle_overlay_key(key.code) {
+                    self.redraw = true;
+                }
+            }
+            Focus::StandbyCratesContent => {
+                self.handle_control_key(key);
+            }
+            Focus::Operations => {
                 if self.operations.handle_key(key.code) {
                     self.redraw = true;
                 }
             }
-            Panel::StandbyCrates => {
-                self.handle_control_key(key);
-            }
-            _ => {}
+            Focus::RemovePackages => {}
         }
     }
 

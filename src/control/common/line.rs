@@ -154,4 +154,13 @@ impl ControlLine {
     pub fn is_focused(&self) -> bool {
         return self.focused;
     }
+
+    /// Clears the focus mark of the line.
+    ///
+    /// The cursor of the panel keeps its position while another focus target
+    /// holds the focus; the mark is dropped when the lines are handed to the
+    /// renderer, so the cursor does not look active from a distance.
+    pub(crate) fn release_focus(&mut self) {
+        self.focused = false;
+    }
 }

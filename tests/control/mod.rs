@@ -3,6 +3,7 @@
 mod appops;
 mod buckets;
 mod doze;
+mod focus;
 mod harness;
 mod inactive;
 mod inventory;

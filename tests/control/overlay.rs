@@ -10,8 +10,6 @@ use crate::common::MockResponse;
 use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
-use super::harness::focused_text;
-use super::harness::overlay_is_focused;
 use super::harness::overlay_lines;
 use super::harness::panel_for;
 use super::harness::wait_for;
@@ -116,21 +114,9 @@ fn lists_system_application(panel: &ControlPanel) -> bool {
     return false;
 }
 
-/// Moves the cursor down until the control strip holds it.
-fn focus_overlay(panel: &mut ControlPanel) {
-    for _ in 0..20 {
-        if overlay_is_focused(panel) {
-            return;
-        }
-        assert!(panel.handle_key(KeyCode::Down));
-    }
-    panic!("the control strip was never reached");
-}
-
 /// Ticks the checkbox that includes the system applications.
 fn show_system_apps(panel: &mut ControlPanel) {
-    focus_overlay(panel);
-    assert!(panel.handle_key(KeyCode::Char(' ')));
+    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
     assert!(checkbox_checked(panel));
 }
 
@@ -180,13 +166,10 @@ fn reaches_the_checkbox_and_shows_system_applications() {
         return entry_texts(panel).len() == THIRD_PARTY.len();
     });
 
-    focus_overlay(&mut panel);
-    // The strip is the only row the cursor can reach, so no content row is
-    // focused while it holds the cursor.
-    assert_eq!(focused_text(&panel), None);
+    // The strip is a focus target of its own, so it takes SPACE while the
+    // cursor of the sections stays where it is.
     assert!(!checkbox_checked(&panel));
-
-    assert!(panel.handle_key(KeyCode::Char(' ')));
+    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
     assert!(checkbox_checked(&panel));
 
     wait_for(&mut panel, |panel| {
@@ -221,11 +204,17 @@ fn applies_the_filter_to_every_section() {
 
     show_system_apps(&mut panel);
 
-    // Doze Whitelist, App Inactive, AppOps and Standby Buckets, bottom up.
-    for _ in 0..4 {
-        assert!(panel.handle_key(KeyCode::Up));
-        check_focused_section(&mut panel);
+    // Walk the sections from the bottom up: Doze Whitelist, App Inactive,
+    // AppOps and Standby Buckets. The cursor belongs to the sections, so the
+    // strip never takes it away.
+    for _ in 0..3 {
+        assert!(panel.handle_key(KeyCode::Down));
     }
+    for _ in 0..3 {
+        check_focused_section(&mut panel);
+        assert!(panel.handle_key(KeyCode::Up));
+    }
+    check_focused_section(&mut panel);
     mock.assert_complete();
 }
 
@@ -240,12 +229,10 @@ fn leaves_the_applications_alone_while_the_checkbox_has_focus() {
     wait_for(&mut panel, |panel| {
         return entry_texts(panel).len() == THIRD_PARTY.len();
     });
-    focus_overlay(&mut panel);
-
-    // The arrows belong to the strip while it holds the cursor, so no bucket
-    // of an application is changed and no command is sent.
-    assert!(!panel.handle_key(KeyCode::Left));
-    assert!(!panel.handle_key(KeyCode::Right));
+    // The strip has the focus, so the arrows never reach an application and no
+    // command is sent.
+    assert!(!panel.handle_overlay_key(KeyCode::Left));
+    assert!(!panel.handle_overlay_key(KeyCode::Right));
 
     let expected = vec![
         String::from("com.example.alpha  active"),
@@ -278,8 +265,10 @@ fn keeps_the_strip_visible_while_the_content_scrolls() {
     // Scrolling never moves the strip, and the strip is never part of the
     // scrollable content.
     assert_eq!(overlay_texts(&panel), strip);
-    assert!(!overlay_is_focused(&panel));
-    for line in panel.lines() {
+    for line in overlay_lines(&panel) {
+        assert!(!line.is_focused(), "the strip looks focused without focus");
+    }
+    for line in panel.lines(true) {
         assert!(!line.is_checkbox(), "the strip leaked into the content");
     }
     mock.assert_complete();
@@ -304,9 +293,9 @@ fn refreshes_the_sections_when_the_filter_changes() {
         return entry_texts(panel).len() == ALL_APPLICATIONS.len();
     });
 
-    // The cursor stays on the strip, which is a valid position for the new
-    // inventory, and the section shows the refreshed list.
-    assert!(overlay_is_focused(&panel));
+    // The checkbox keeps its new setting and the section shows the refreshed
+    // list.
+    assert!(checkbox_checked(&panel));
     assert!(lists_system_application(&panel));
     mock.assert_complete();
 }

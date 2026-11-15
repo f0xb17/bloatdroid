@@ -12,7 +12,6 @@ use super::harness::entry_texts;
 use super::harness::focused_text;
 use super::harness::header_expansion;
 use super::harness::header_texts;
-use super::harness::overlay_is_focused;
 use super::harness::panel_for;
 use super::harness::status_texts;
 
@@ -117,10 +116,10 @@ fn stops_at_the_first_and_last_row() {
     }
     assert_eq!(focused_text(&panel), Some(String::from("Doze Whitelist")));
 
-    // The control strip below the sections is the last row of the panel.
-    assert!(panel.handle_key(KeyCode::Down));
-    assert!(overlay_is_focused(&panel));
+    // The sections are a focus target of their own, so the cursor stops on the
+    // last section header and never moves into the control strip.
     assert!(!panel.handle_key(KeyCode::Down));
+    assert_eq!(focused_text(&panel), Some(String::from("Doze Whitelist")));
     mock.assert_complete();
 }
 

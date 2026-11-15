@@ -49,7 +49,7 @@ fn expect_listing(mock: &MockAdb, package: &str) {
 /// Returns the only application row of the panel.
 fn only_entry(panel: &ControlPanel) -> ControlLine {
     let mut rows = Vec::new();
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         if line.is_header() || line.is_status() {
             continue;
         }
@@ -272,7 +272,7 @@ fn keeps_the_complete_row_of_the_focused_application() {
     assert!(panel.handle_key(KeyCode::Down));
 
     let mut focused = 0;
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         if !line.is_focused() {
             continue;
         }

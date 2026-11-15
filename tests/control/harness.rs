@@ -70,7 +70,7 @@ pub fn wait_for_commands(panel: &mut ControlPanel, mock: &MockAdb) {
 /// Returns the text of the section headers, in display order.
 pub fn header_texts(panel: &ControlPanel) -> Vec<String> {
     let mut texts = Vec::new();
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         if line.is_header() {
             texts.push(String::from(line.text()));
         }
@@ -81,7 +81,7 @@ pub fn header_texts(panel: &ControlPanel) -> Vec<String> {
 /// Returns whether each section header is expanded, in display order.
 pub fn header_expansion(panel: &ControlPanel) -> Vec<bool> {
     let mut expanded = Vec::new();
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         if line.is_header() {
             expanded.push(line.is_expanded());
         }
@@ -102,7 +102,7 @@ pub fn line_text(line: &ControlLine) -> String {
 /// Returns the text of the application rows, in display order.
 pub fn entry_texts(panel: &ControlPanel) -> Vec<String> {
     let mut texts = Vec::new();
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         if line.is_header() || line.is_status() {
             continue;
         }
@@ -114,7 +114,7 @@ pub fn entry_texts(panel: &ControlPanel) -> Vec<String> {
 /// Returns the text of the status rows, in display order.
 pub fn status_texts(panel: &ControlPanel) -> Vec<String> {
     let mut texts = Vec::new();
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         if line.is_status() {
             texts.push(String::from(line.text()));
         }
@@ -124,7 +124,7 @@ pub fn status_texts(panel: &ControlPanel) -> Vec<String> {
 
 /// Returns the text of the row that holds the cursor.
 pub fn focused_text(panel: &ControlPanel) -> Option<String> {
-    for line in panel.lines() {
+    for line in panel.lines(true) {
         if line.is_focused() {
             return Some(line_text(&line));
         }
@@ -153,15 +153,10 @@ pub fn log_has(panel: &ControlPanel, level: LogLevel, message: &str) -> bool {
 
 /// Returns the lines of the control strip that stays at the bottom.
 pub fn overlay_lines(panel: &ControlPanel) -> Vec<ControlLine> {
-    return panel.overlay_lines();
+    return panel.overlay_lines(false);
 }
 
-/// Returns `true` when the control strip holds the cursor.
-pub fn overlay_is_focused(panel: &ControlPanel) -> bool {
-    for line in panel.overlay_lines() {
-        if line.is_focused() {
-            return true;
-        }
-    }
-    return false;
+/// Returns the lines of the control strip as it looks while it has the focus.
+pub fn focused_overlay_lines(panel: &ControlPanel) -> Vec<ControlLine> {
+    return panel.overlay_lines(true);
 }

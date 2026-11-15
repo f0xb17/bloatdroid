@@ -56,8 +56,6 @@ enum Slot {
         /// The position of the entry inside the section.
         entry: usize,
     },
-    /// The control strip at the bottom of the panel.
-    Overlay,
 }
 
 /// The four control sections shown in the Standby Crates panel.
@@ -163,18 +161,19 @@ impl ControlPanel {
         return previous != Some(height) || moved;
     }
 
-    /// Handles a key press while the panel has focus.
+    /// Handles a key press while the sections of the panel have focus.
     ///
-    /// `SPACE` expands or collapses the focused section, or toggles the focused
-    /// control of the strip, and the arrows move the cursor and change the
-    /// value of the selected entry. Returns `true` when the panel changed.
+    /// `SPACE` expands or collapses the focused section, and the arrows move
+    /// the cursor and change the value of the selected entry. The control strip
+    /// is a focus target of its own, so no key from here reaches it. Returns
+    /// `true` when the panel changed.
     pub fn handle_key(&mut self, key: KeyCode) -> bool {
         let mut changed = self.normalize_cursor();
 
         let handled = match key {
             KeyCode::Up => self.move_up(),
             KeyCode::Down => self.move_down(),
-            KeyCode::Char(' ') => self.activate(),
+            KeyCode::Char(' ') => self.toggle_focused_section(),
             KeyCode::Left | KeyCode::Right => self.handle_entry_key(key),
             _ => false,
         };
@@ -186,6 +185,18 @@ impl ControlPanel {
             changed = true;
         }
         return changed;
+    }
+
+    /// Handles a key press while the control strip has focus.
+    ///
+    /// Only the controls of the strip react, so the arrows and the entry keys
+    /// of the sections can never reach an application from here. Returns `true`
+    /// when the panel changed.
+    pub fn handle_overlay_key(&mut self, key: KeyCode) -> bool {
+        match key {
+            KeyCode::Char(' ') => return self.toggle_system_apps(),
+            _ => return false,
+        }
     }
 
     /// Applies the background work that finished since the last call.
@@ -228,26 +239,42 @@ impl ControlPanel {
     /// Returns the lines of the control strip that stays at the bottom.
     ///
     /// The strip is not part of [`ControlPanel::lines`], so the scrolling
-    /// content never moves it and never draws over it.
-    pub fn overlay_lines(&self) -> Vec<ControlLine> {
-        return self.overlay.lines(self.cursor == Slot::Overlay);
+    /// content never moves it and never draws over it. `focused` marks the
+    /// strip as the area that holds the focus, which is how the terminal layer
+    /// tells it apart from the sections.
+    pub fn overlay_lines(&self, focused: bool) -> Vec<ControlLine> {
+        return self.overlay.lines(focused);
     }
 
     /// Returns the lines that belong to the visible area of the panel.
     ///
     /// Nothing outside the viewport is built into a widget: the renderer draws
-    /// at most as many rows as the terminal has room for.
-    pub fn lines(&self) -> Vec<ControlLine> {
+    /// at most as many rows as the terminal has room for. `content_focused`
+    /// decides whether the cursor mark is shown: the sections are a focus
+    /// target of their own, so their mark disappears while the control strip
+    /// has the focus. The scroll position never depends on it.
+    pub fn lines(&self, content_focused: bool) -> Vec<ControlLine> {
         let lines = self.full_lines();
 
-        let height = match self.viewport {
-            Some(height) => height,
-            None => return lines,
+        let mut visible = match self.viewport {
+            Some(height) if height > 0 => self.visible_lines(&lines, height),
+            Some(_) => Vec::new(),
+            None => lines,
         };
-        if height == 0 {
-            return Vec::new();
+        if !content_focused {
+            for line in &mut visible {
+                line.release_focus();
+            }
         }
+        return visible;
+    }
 
+    /// Returns the part of the lines that a viewport of the given height shows.
+    fn visible_lines(
+        &self,
+        lines: &[ControlLine],
+        height: usize,
+    ) -> Vec<ControlLine> {
         let start = self.offset.min(lines.len());
         let end = lines.len().min(start.saturating_add(height));
 
@@ -478,15 +505,13 @@ impl ControlPanel {
         return self.focus(target);
     }
 
-    /// Handles `SPACE` for whatever holds the cursor.
+    /// Toggles the checkbox of the control strip.
     ///
-    /// On the control strip it toggles the focused control and reads the
-    /// package inventory again, because the strip decides which applications
-    /// the sections list.
-    fn activate(&mut self) -> bool {
-        if self.cursor != Slot::Overlay {
-            return self.toggle_focused_section();
-        }
+    /// The checkbox decides which applications the sections list, so the panel
+    /// reads the package inventory again. The strip is a focus target of its
+    /// own, which makes this the place where a future control of the strip,
+    /// such as a search field, handles its keys.
+    fn toggle_system_apps(&mut self) -> bool {
         if !self.overlay.toggle() {
             return false;
         }
@@ -527,7 +552,7 @@ impl ControlPanel {
                 section,
                 entry,
             } => (section, entry),
-            Slot::Header(_) | Slot::Overlay => return false,
+            Slot::Header(_) => return false,
         };
 
         let entry = match self.entry_copy(section, index) {
@@ -559,8 +584,6 @@ impl ControlPanel {
                 });
             }
         }
-        slots.push(Slot::Overlay);
-
         return slots;
     }
 
@@ -585,7 +608,7 @@ impl ControlPanel {
                 section,
                 entry,
             } => (section, entry),
-            Slot::Header(_) | Slot::Overlay => return false,
+            Slot::Header(_) => return false,
         };
 
         let count = self.entry_count(section);
@@ -616,7 +639,7 @@ impl ControlPanel {
                 section,
                 entry,
             } => (section, entry),
-            Slot::Header(_) | Slot::Overlay => return None,
+            Slot::Header(_) => return None,
         };
 
         let control = self.find(section)?;
@@ -632,7 +655,6 @@ impl ControlPanel {
                 section,
                 ..
             } => section,
-            Slot::Overlay => return None,
         };
         return Some(section);
     }

@@ -87,7 +87,7 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App) {
 
 /// Draws a single panel, styled by whether it has focus.
 fn render_panel(frame: &mut Frame, app: &mut App, area: Rect, panel: Panel) {
-    let focused = app.focused() == panel;
+    let focused = app.focused().panel() == panel;
     let block = Block::bordered()
         .title(panel.title())
         .title_alignment(Alignment::Center)
@@ -146,12 +146,14 @@ fn render_operations(frame: &mut Frame, app: &mut App, area: Rect) {
 /// is told about the rows the strip takes, so no line of it is hidden behind the
 /// strip.
 fn render_control(frame: &mut Frame, app: &mut App, area: Rect) {
-    let strip = app.control().overlay_lines();
+    let overlay_focused = app.overlay_is_focused();
+    let content_focused = app.content_is_focused();
+    let strip = app.control().overlay_lines(overlay_focused);
     let strip_height = u16::try_from(strip.len()).unwrap_or(u16::MAX);
     let content_height = area.height.saturating_sub(strip_height);
     app.set_control_viewport(usize::from(content_height));
 
-    render_control_content(frame, app.control(), area);
+    render_control_content(frame, app.control(), area, content_focused);
     render_control_strip(frame, area, &strip);
 }
 
@@ -164,11 +166,12 @@ fn render_control_content(
     frame: &mut Frame,
     control: &ControlPanel,
     area: Rect,
+    content_focused: bool,
 ) {
     let bottom = area.y.saturating_add(area.height);
 
     let mut y = area.y;
-    for line in control.lines() {
+    for line in control.lines(content_focused) {
         if y >= bottom {
             return;
         }
