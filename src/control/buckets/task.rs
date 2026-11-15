@@ -2,8 +2,8 @@
 
 use crate::adb::AdbClient;
 use crate::control::common::ControlEntry;
-use crate::control::common::PackageInventory;
 use crate::control::common::WorkerTask;
+use crate::discover::apps::PackageInventory;
 
 use super::bucket::StandbyBucket;
 use super::commands::get_standby_bucket;

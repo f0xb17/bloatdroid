@@ -1,12 +1,17 @@
 //! Application state and key handling for the terminal interface.
 
+use std::io;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::adb::AdbClient;
 use crate::control::ControlPanel;
 use crate::control::ControlTarget;
 use crate::discover::AndroidDevice;
+use crate::discover::DeviceScanner;
+use crate::discover::REFRESH_INTERVAL;
+use crate::discover::apps::ApplicationFilter;
 use crate::log::LogLevel;
 use crate::log::OperationLog;
 
@@ -43,20 +48,20 @@ impl Panel {
 
 /// One target of the global focus navigation.
 ///
-/// The Standby Crates panel holds two of them: the control strip at its bottom
-/// and the expandable sections above it. They are separate targets, not
-/// separate panels: both stay inside the one bordered panel that the two share.
+/// The Device Selection panel holds two of them: the device list and the system
+/// application checkbox below it. They are separate targets, not separate
+/// panels: both stay inside the one bordered panel that the two share.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Focus {
     /// Selects the Android device to operate on.
     DeviceSelection,
+    /// Decides whether system applications are part of every application list.
+    DeviceSelectionFilter,
     /// Holds the packages that are queued for removal.
     RemovePackages,
-    /// Holds the controls of the Standby Crates panel.
-    StandbyCratesOverlay,
     /// Holds the expandable sections of the Standby Crates panel.
-    StandbyCratesContent,
+    StandbyCrates,
     /// Shows what the operations did.
     Operations,
 }
@@ -65,10 +70,10 @@ impl Focus {
     /// Returns the focus target that follows this one.
     pub fn next(self) -> Self {
         let next = match self {
-            Focus::DeviceSelection => Focus::RemovePackages,
-            Focus::RemovePackages => Focus::StandbyCratesOverlay,
-            Focus::StandbyCratesOverlay => Focus::StandbyCratesContent,
-            Focus::StandbyCratesContent => Focus::Operations,
+            Focus::DeviceSelection => Focus::DeviceSelectionFilter,
+            Focus::DeviceSelectionFilter => Focus::RemovePackages,
+            Focus::RemovePackages => Focus::StandbyCrates,
+            Focus::StandbyCrates => Focus::Operations,
             Focus::Operations => Focus::DeviceSelection,
         };
         return next;
@@ -78,24 +83,24 @@ impl Focus {
     pub fn previous(self) -> Self {
         let previous = match self {
             Focus::DeviceSelection => Focus::Operations,
-            Focus::RemovePackages => Focus::DeviceSelection,
-            Focus::StandbyCratesOverlay => Focus::RemovePackages,
-            Focus::StandbyCratesContent => Focus::StandbyCratesOverlay,
-            Focus::Operations => Focus::StandbyCratesContent,
+            Focus::DeviceSelectionFilter => Focus::DeviceSelection,
+            Focus::RemovePackages => Focus::DeviceSelectionFilter,
+            Focus::StandbyCrates => Focus::RemovePackages,
+            Focus::Operations => Focus::StandbyCrates,
         };
         return previous;
     }
 
     /// Returns the panel that shows this focus target.
     ///
-    /// Both Standby Crates targets share one panel, so the panel looks focused
+    /// Both Device Selection targets share one panel, so the panel looks focused
     /// whichever of the two holds the focus.
     pub fn panel(self) -> Panel {
         let panel = match self {
             Focus::DeviceSelection => Panel::DeviceSelection,
+            Focus::DeviceSelectionFilter => Panel::DeviceSelection,
             Focus::RemovePackages => Panel::RemovePackages,
-            Focus::StandbyCratesOverlay => Panel::StandbyCrates,
-            Focus::StandbyCratesContent => Panel::StandbyCrates,
+            Focus::StandbyCrates => Panel::StandbyCrates,
             Focus::Operations => Panel::Operations,
         };
         return panel;
@@ -111,6 +116,7 @@ pub struct App {
     selected: Option<usize>,
     overlay_open: bool,
     discovery_error: Option<String>,
+    filter: ApplicationFilter,
     control: ControlPanel,
     log: Arc<OperationLog>,
     operations: OperationsPanel,
@@ -119,8 +125,17 @@ pub struct App {
 }
 
 impl App {
-    /// Creates the application with the first panel focused.
-    pub(crate) fn new(refresh: RefreshWorker, control: ControlPanel) -> Self {
+    /// Creates the application with the device list of the Device Selection
+    /// panel focused.
+    ///
+    /// ADB runs through the given client, so the whole application can be driven
+    /// without a device. Device discovery and the control panel start their own
+    /// background workers here.
+    pub fn new(client: AdbClient) -> io::Result<Self> {
+        let scanner = DeviceScanner::new(client.clone());
+        let refresh = RefreshWorker::spawn(scanner, REFRESH_INTERVAL)?;
+        let control = ControlPanel::new(client)?;
+
         let log = control.log();
         let operations = OperationsPanel::new(Arc::clone(&log));
         let app = Self {
@@ -130,13 +145,14 @@ impl App {
             selected: None,
             overlay_open: false,
             discovery_error: None,
+            filter: ApplicationFilter::new(),
             control,
             log,
             operations,
             refresh,
             redraw: true,
         };
-        return app;
+        return Ok(app);
     }
 
     /// Returns the focus target that currently has focus.
@@ -144,16 +160,28 @@ impl App {
         return self.focused;
     }
 
-    /// Returns `true` when the control strip of the Standby Crates panel has
+    /// Returns `true` when the device list of the Device Selection panel has
     /// focus.
-    pub fn overlay_is_focused(&self) -> bool {
-        return self.focused == Focus::StandbyCratesOverlay;
+    pub fn device_list_is_focused(&self) -> bool {
+        return self.focused == Focus::DeviceSelection;
+    }
+
+    /// Returns `true` when the system application checkbox of the Device
+    /// Selection panel has focus.
+    pub fn filter_is_focused(&self) -> bool {
+        return self.focused == Focus::DeviceSelectionFilter;
     }
 
     /// Returns `true` when the sections of the Standby Crates panel have
     /// focus.
-    pub fn content_is_focused(&self) -> bool {
-        return self.focused == Focus::StandbyCratesContent;
+    pub fn crates_are_focused(&self) -> bool {
+        return self.focused == Focus::StandbyCrates;
+    }
+
+    /// Returns `true` when system applications are part of every application
+    /// list.
+    pub fn show_system(&self) -> bool {
+        return self.filter.show_system();
     }
 
     /// Returns `true` for as long as the application should keep running.
@@ -253,8 +281,9 @@ impl App {
     /// Handles a key press.
     ///
     /// The global shortcuts are handled here, so they stay available no matter
-    /// which panel has focus. Everything else goes to the overlay while it is
-    /// open, and to the focused panel otherwise.
+    /// which panel or which control has focus. Everything else goes to the
+    /// device information overlay while it is open, and to the focused part of
+    /// the interface otherwise.
     pub fn handle_key(&mut self, key: KeyEvent) {
         if self.overlay_open {
             self.handle_overlay_key(key);
@@ -420,19 +449,18 @@ impl App {
         }
     }
 
-    /// Passes a key press to the focused panel.
+    /// Passes a key press to the focused part of the interface.
     fn handle_panel_key(&mut self, key: KeyEvent) {
         match self.focused {
             Focus::DeviceSelection => {
                 self.handle_device_selection_key(key);
                 self.sync_control_target();
             }
-            Focus::StandbyCratesOverlay => {
-                if self.control.handle_overlay_key(key.code) {
-                    self.redraw = true;
-                }
+            Focus::DeviceSelectionFilter => {
+                self.handle_filter_key(key);
             }
-            Focus::StandbyCratesContent => {
+            Focus::RemovePackages => {}
+            Focus::StandbyCrates => {
                 self.handle_control_key(key);
             }
             Focus::Operations => {
@@ -440,8 +468,36 @@ impl App {
                     self.redraw = true;
                 }
             }
-            Focus::RemovePackages => {}
         }
+    }
+
+    /// Handles a key press while the system application checkbox has focus.
+    ///
+    /// Only SPACE reacts. The keys of the device list never reach the checkbox
+    /// from here, so it can neither move the device selection nor open the
+    /// device information overlay.
+    fn handle_filter_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char(' ') {
+            self.toggle_filter();
+        }
+    }
+
+    /// Toggles the global system application setting.
+    ///
+    /// The setting decides which applications every list shows, so the control
+    /// panel reads the package inventory of the selected device again.
+    fn toggle_filter(&mut self) {
+        self.filter.toggle();
+
+        let message = if self.filter.show_system() {
+            String::from("Showing system applications.")
+        } else {
+            String::from("Hiding system applications.")
+        };
+        self.log.record(LogLevel::Info, message);
+
+        self.control.set_filter(self.filter);
+        self.redraw = true;
     }
 
     /// Handles a key press for the Standby Crates panel.

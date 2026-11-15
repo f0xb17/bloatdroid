@@ -6,9 +6,14 @@
 //! actually does.
 //!
 //! The panel also owns what the sections share: the package inventory of the
-//! selected device, which is read once and handed to every section, the scroll
-//! position, which keeps the cursor inside the visible area of the terminal,
-//! and the control strip that stays at the bottom of the panel.
+//! selected device, which is read once with the global system application filter
+//! and handed to every section, and the scroll position, which keeps the cursor
+//! inside the visible area of the terminal.
+//!
+//! The system application filter is application-wide state, so the panel never
+//! changes it on its own. It applies the filter it is handed and reads the
+//! inventory again whenever that filter differs from the one the inventory was
+//! read with.
 
 use std::io;
 use std::sync::Arc;
@@ -16,6 +21,8 @@ use std::sync::Arc;
 use crossterm::event::KeyCode;
 
 use crate::adb::AdbClient;
+use crate::discover::apps::ApplicationFilter;
+use crate::discover::apps::Inventory;
 use crate::log::LogLevel;
 use crate::log::OperationLog;
 
@@ -25,7 +32,6 @@ use super::common::ControlEntry;
 use super::common::ControlLine;
 use super::common::ControlSection;
 use super::common::ControlTarget;
-use super::common::Inventory;
 use super::common::Section;
 use super::common::SectionState;
 use super::common::Worker;
@@ -33,7 +39,6 @@ use super::common::inventory::InventoryOutcome;
 use super::common::inventory::InventoryTask;
 use super::doze::DozeSection;
 use super::inactive::InactiveSection;
-use super::overlay::Overlay;
 
 /// The message shown for an expanded section without entries.
 const NO_ENTRIES: &str = "no applications";
@@ -64,10 +69,11 @@ pub struct ControlPanel {
     sections: Vec<Box<dyn ControlSection>>,
     cursor: Slot,
     target: Option<ControlTarget>,
-    overlay: Overlay,
+    filter: ApplicationFilter,
     client: AdbClient,
     inventory: Inventory,
     inventory_requested: bool,
+    revision: u64,
     inventory_worker: Worker<InventoryTask>,
     viewport: Option<usize>,
     offset: usize,
@@ -90,10 +96,11 @@ impl ControlPanel {
             sections,
             cursor: Slot::Header(Section::Buckets),
             target: None,
-            overlay: Overlay::new(),
+            filter: ApplicationFilter::new(),
             client,
             inventory: Inventory::Absent,
             inventory_requested: false,
+            revision: 0,
             inventory_worker,
             viewport: None,
             offset: 0,
@@ -125,6 +132,9 @@ impl ControlPanel {
         }
 
         self.target = target;
+        // A read that was started for the previous device is outdated, even
+        // when the user comes back to the same device later.
+        self.next_revision();
         self.inventory_requested = false;
         if self.publish_inventory(Inventory::Absent) {
             changed = true;
@@ -140,12 +150,26 @@ impl ControlPanel {
 
     /// Reads the installed packages of the selected device again.
     ///
-    /// The control strip decides whether system applications are part of the
-    /// list, so toggling it and refreshing on request share this path. Every
-    /// section rescans its own state against the new list. Returns `true` when
-    /// the panel changed.
+    /// A filter change and a refresh on request share this path. Every section
+    /// rescans its own state against the new list. Returns `true` when the panel
+    /// changed.
     pub fn refresh_inventory(&mut self) -> bool {
         self.inventory_requested = false;
+        return self.request_inventory();
+    }
+
+    /// Applies the global system application setting.
+    ///
+    /// The setting decides which applications every section lists, so a change
+    /// reads the package inventory again with the new setting. The setting
+    /// belongs to the application: the panel never changes it on its own, it
+    /// only applies the value it is handed. Returns `true` when the panel
+    /// changed.
+    pub fn set_filter(&mut self, filter: ApplicationFilter) -> bool {
+        if self.filter == filter {
+            return false;
+        }
+        self.filter = filter;
         return self.request_inventory();
     }
 
@@ -164,9 +188,9 @@ impl ControlPanel {
     /// Handles a key press while the sections of the panel have focus.
     ///
     /// `SPACE` expands or collapses the focused section, and the arrows move
-    /// the cursor and change the value of the selected entry. The control strip
-    /// is a focus target of its own, so no key from here reaches it. Returns
-    /// `true` when the panel changed.
+    /// the cursor and change the value of the selected entry. No key from here
+    /// changes the system application setting, which belongs to the
+    /// application. Returns `true` when the panel changed.
     pub fn handle_key(&mut self, key: KeyCode) -> bool {
         let mut changed = self.normalize_cursor();
 
@@ -185,18 +209,6 @@ impl ControlPanel {
             changed = true;
         }
         return changed;
-    }
-
-    /// Handles a key press while the control strip has focus.
-    ///
-    /// Only the controls of the strip react, so the arrows and the entry keys
-    /// of the sections can never reach an application from here. Returns `true`
-    /// when the panel changed.
-    pub fn handle_overlay_key(&mut self, key: KeyCode) -> bool {
-        match key {
-            KeyCode::Char(' ') => return self.toggle_system_apps(),
-            _ => return false,
-        }
     }
 
     /// Applies the background work that finished since the last call.
@@ -236,23 +248,13 @@ impl ControlPanel {
         return changed;
     }
 
-    /// Returns the lines of the control strip that stays at the bottom.
-    ///
-    /// The strip is not part of [`ControlPanel::lines`], so the scrolling
-    /// content never moves it and never draws over it. `focused` marks the
-    /// strip as the area that holds the focus, which is how the terminal layer
-    /// tells it apart from the sections.
-    pub fn overlay_lines(&self, focused: bool) -> Vec<ControlLine> {
-        return self.overlay.lines(focused);
-    }
-
     /// Returns the lines that belong to the visible area of the panel.
     ///
     /// Nothing outside the viewport is built into a widget: the renderer draws
     /// at most as many rows as the terminal has room for. `content_focused`
     /// decides whether the cursor mark is shown: the sections are a focus
-    /// target of their own, so their mark disappears while the control strip
-    /// has the focus. The scroll position never depends on it.
+    /// target of their own, so their mark disappears while another part of the
+    /// interface has the focus. The scroll position never depends on it.
     pub fn lines(&self, content_focused: bool) -> Vec<ControlLine> {
         let lines = self.full_lines();
 
@@ -403,10 +405,12 @@ impl ControlPanel {
         }
 
         self.inventory_requested = true;
+        let revision = self.next_revision();
         let task = InventoryTask::load(
             self.client.clone(),
             serial,
-            self.overlay.show_system(),
+            self.filter,
+            revision,
         );
         if self.inventory_worker.submit(task).is_err() {
             let message = String::from(INVENTORY_STATUS);
@@ -415,17 +419,23 @@ impl ControlPanel {
         return self.publish_inventory(Inventory::Loading);
     }
 
+    /// Bumps and returns the revision of the newest inventory request.
+    fn next_revision(&mut self) -> u64 {
+        self.revision += 1;
+        return self.revision;
+    }
+
     /// Turns an inventory outcome into the inventory to publish.
     ///
     /// The outcome of a device that is no longer selected, and the outcome of a
-    /// request with the other system application setting, are dropped, so an
+    /// request that a newer device or filter change overtook, are dropped, so an
     /// answer that no longer fits the panel never replaces what is shown.
     fn inventory_after(&self, outcome: InventoryOutcome) -> Option<Inventory> {
-        let serial = self.target.as_ref()?.serial.as_str();
-        if outcome.serial() != serial {
+        if outcome.revision() != self.revision {
             return None;
         }
-        if outcome.include_system() != self.overlay.show_system() {
+        let serial = self.target.as_ref()?.serial.as_str();
+        if outcome.serial() != serial {
             return None;
         }
 
@@ -503,28 +513,6 @@ impl ControlPanel {
             None => return false,
         };
         return self.focus(target);
-    }
-
-    /// Toggles the checkbox of the control strip.
-    ///
-    /// The checkbox decides which applications the sections list, so the panel
-    /// reads the package inventory again. The strip is a focus target of its
-    /// own, which makes this the place where a future control of the strip,
-    /// such as a search field, handles its keys.
-    fn toggle_system_apps(&mut self) -> bool {
-        if !self.overlay.toggle() {
-            return false;
-        }
-
-        let message = if self.overlay.show_system() {
-            String::from("Showing system applications.")
-        } else {
-            String::from("Hiding system applications.")
-        };
-        self.log.record(LogLevel::Info, message);
-
-        self.refresh_inventory();
-        return true;
     }
 
     /// Expands or collapses the section that holds the cursor.

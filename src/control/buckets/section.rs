@@ -9,10 +9,10 @@ use crate::adb::AdbClient;
 use crate::control::common::ControlEntry;
 use crate::control::common::ControlSection;
 use crate::control::common::ControlTarget;
-use crate::control::common::Inventory;
 use crate::control::common::Section;
 use crate::control::common::SectionState;
 use crate::control::common::Worker;
+use crate::discover::apps::Inventory;
 use crate::log::LogLevel;
 use crate::log::OperationLog;
 
@@ -325,12 +325,12 @@ impl ControlSection for BucketsSection {
             Inventory::Failed(message) => Some(message.clone()),
             _ => None,
         };
-        let stale =
-            matches!(&self.inventory, Inventory::Absent | Inventory::Failed(_));
+        let stale = matches!(&self.inventory, Inventory::Absent);
 
-        // The entries of a device that is gone or unreadable are dropped. A
-        // refresh of the same device keeps them until the new states arrive,
-        // so the selected application survives the reload.
+        // The entries of a device that is gone are dropped. A failed read and a
+        // refresh of the same device keep them until the new states arrive, so
+        // a single failed read never hides applications that are still there
+        // and the selected application survives the reload.
         let mut changed = false;
         if stale && self.state.replace_entries(Vec::new()) {
             changed = true;

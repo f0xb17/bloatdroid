@@ -1,46 +1,28 @@
-//! The package inventory shared by every control section.
+//! The background read of the package inventory shared by every section.
 //!
-//! All four sections show the applications of the same device, so the panel
-//! reads the installed package list once and hands the same immutable list to
-//! every section. Nothing else asks the device for the package list, and the
-//! list is dropped as soon as the selected device or the system application
-//! filter changes.
-
-use std::sync::Arc;
+//! The panel reads the installed packages of one device once and hands the same
+//! immutable list to every section. The listing itself is application
+//! discovery, so the scanner lives in [`crate::discover::apps`]; this module only
+//! carries one read across the control worker thread and back.
+//!
+//! Every request carries the revision of the inventory it was started for. The
+//! panel accepts only the answer of the newest request, so a read that a device
+//! or filter change overtook cannot replace newer data.
 
 use crate::adb::AdbClient;
-use crate::adb::list_packages;
+use crate::discover::apps::ApplicationFilter;
+use crate::discover::apps::ApplicationScanner;
+use crate::discover::apps::PackageInventory;
 
 use super::worker::WorkerTask;
 
-/// The installed packages of one device.
-///
-/// The list is immutable and reference counted: the panel reads it once and
-/// every section shares the same value, so reading it costs nothing after the
-/// first load.
-pub type PackageInventory = Arc<[String]>;
-
-/// The package inventory a control section works with.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub enum Inventory {
-    /// No device is selected.
-    Absent,
-    /// The installed packages are being read.
-    Loading,
-    /// The installed packages of the selected device.
-    Loaded(PackageInventory),
-    /// The installed packages could not be read, with the failure as shown to
-    /// the user.
-    Failed(String),
-}
-
-/// Reads the installed packages of one device on the inventory worker.
+/// Reads the installed packages of one device with the global filter.
 #[non_exhaustive]
 pub struct InventoryTask {
-    client: AdbClient,
+    scanner: ApplicationScanner,
     serial: String,
-    include_system: bool,
+    filter: ApplicationFilter,
+    revision: u64,
 }
 
 /// The result of an [`InventoryTask`].
@@ -50,8 +32,8 @@ pub enum InventoryOutcome {
     Loaded {
         /// The device the packages belong to.
         serial: String,
-        /// Whether the system packages were part of the request.
-        include_system: bool,
+        /// The revision of the request that produced this answer.
+        revision: u64,
         /// The installed packages, sorted by identifier.
         packages: PackageInventory,
     },
@@ -59,8 +41,8 @@ pub enum InventoryOutcome {
     Failed {
         /// The device the attempt was made on.
         serial: String,
-        /// Whether the system packages were part of the request.
-        include_system: bool,
+        /// The revision of the request that produced this answer.
+        revision: u64,
         /// The failure, as shown to the user.
         message: String,
     },
@@ -69,18 +51,20 @@ pub enum InventoryOutcome {
 impl InventoryTask {
     /// Builds a task that reads the installed packages of one device.
     ///
-    /// `include_system` decides whether the system applications are part of
-    /// the list; without it the package manager only reports the applications
-    /// the user installed.
+    /// The filter decides whether system applications are part of the list, and
+    /// the revision identifies the request, so an answer that a newer request
+    /// overtook is recognizable.
     pub fn load(
         client: AdbClient,
         serial: String,
-        include_system: bool,
+        filter: ApplicationFilter,
+        revision: u64,
     ) -> Self {
         let task = Self {
-            client,
+            scanner: ApplicationScanner::new(client),
             serial,
-            include_system,
+            filter,
+            revision,
         };
         return task;
     }
@@ -102,19 +86,19 @@ impl InventoryOutcome {
         return serial.as_str();
     }
 
-    /// Returns whether the request included the system applications.
-    pub fn include_system(&self) -> bool {
-        let include_system = match self {
+    /// Returns the revision of the request the outcome answers.
+    pub fn revision(&self) -> u64 {
+        let revision = match self {
             InventoryOutcome::Loaded {
-                include_system,
+                revision,
                 ..
-            } => *include_system,
+            } => *revision,
             InventoryOutcome::Failed {
-                include_system,
+                revision,
                 ..
-            } => *include_system,
+            } => *revision,
         };
-        return include_system;
+        return revision;
     }
 }
 
@@ -122,15 +106,13 @@ impl WorkerTask for InventoryTask {
     type Response = InventoryOutcome;
 
     fn execute(self) -> InventoryOutcome {
-        let listed =
-            list_packages(&self.client, &self.serial, self.include_system);
+        let listed = self.scanner.scan(&self.serial, self.filter);
 
         match listed {
             Ok(packages) => {
-                let packages = PackageInventory::from(packages);
                 let outcome = InventoryOutcome::Loaded {
                     serial: self.serial,
-                    include_system: self.include_system,
+                    revision: self.revision,
                     packages,
                 };
                 return outcome;
@@ -139,7 +121,7 @@ impl WorkerTask for InventoryTask {
                 let message = format!("could not list applications: {error}");
                 let outcome = InventoryOutcome::Failed {
                     serial: self.serial,
-                    include_system: self.include_system,
+                    revision: self.revision,
                     message,
                 };
                 return outcome;

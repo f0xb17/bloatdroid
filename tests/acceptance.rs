@@ -8,3 +8,4 @@ mod adb;
 mod common;
 mod control;
 mod discover;
+mod tui;

@@ -3,7 +3,7 @@
 //! A control area only describes what is specific to it: how its entries are
 //! read, which values it accepts, and what a key press does to one entry. The
 //! expandable section state, the background worker, the panel lines, the
-//! section interface, the package inventory of the selected device, and the
+//! section interface, the background read of the package inventory, and the
 //! bounded concurrent execution of the per-package queries live here so that
 //! all four areas behave the same way. The two-column layout of the application
 //! lists lives here as well.
@@ -21,8 +21,6 @@ pub mod worker;
 
 pub use entry::ControlEntry;
 pub use interface::ControlSection;
-pub use inventory::Inventory;
-pub use inventory::PackageInventory;
 pub use line::ControlLine;
 pub use row::application_row;
 pub use section::Section;

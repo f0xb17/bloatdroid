@@ -1,4 +1,8 @@
-//! Tests for the control strip and the system application filter.
+//! Tests for the global system application filter.
+//!
+//! The filter belongs to the application, so these tests hand it to the panel
+//! the way the interface does and check that every application list follows it.
+//! Nothing here needs a device: every ADB command goes through the mock.
 
 use crossterm::event::KeyCode;
 
@@ -10,8 +14,9 @@ use crate::common::MockResponse;
 use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
-use super::harness::overlay_lines;
 use super::harness::panel_for;
+use super::harness::set_filter;
+use super::harness::status_texts;
 use super::harness::wait_for;
 
 /// The applications that the device reports as installed by the user.
@@ -85,23 +90,27 @@ fn expect_whitelist(mock: &MockAdb) {
     );
 }
 
-/// Returns the text of every line of the control strip.
-fn overlay_texts(panel: &ControlPanel) -> Vec<String> {
-    let mut texts = Vec::new();
-    for line in overlay_lines(panel) {
-        texts.push(String::from(line.text()));
+/// Returns how often the package list of a device was read with a filter.
+fn listings(mock: &MockAdb, include_system: bool) -> usize {
+    let mut wanted = vec![
+        String::from("-s"),
+        String::from(SERIAL),
+        String::from("shell"),
+        String::from("pm"),
+        String::from("list"),
+        String::from("packages"),
+    ];
+    if !include_system {
+        wanted.push(String::from("-3"));
     }
-    return texts;
-}
 
-/// Returns whether the checkbox of the strip is ticked.
-fn checkbox_checked(panel: &ControlPanel) -> bool {
-    for line in overlay_lines(panel) {
-        if line.is_checkbox() {
-            return line.is_checked();
+    let mut count = 0;
+    for call in mock.calls() {
+        if call == wanted {
+            count += 1;
         }
     }
-    return false;
+    return count;
 }
 
 /// Returns whether the expanded section lists the system application.
@@ -114,10 +123,11 @@ fn lists_system_application(panel: &ControlPanel) -> bool {
     return false;
 }
 
-/// Ticks the checkbox that includes the system applications.
-fn show_system_apps(panel: &mut ControlPanel) {
-    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
-    assert!(checkbox_checked(panel));
+/// Polls until the expanded section shows the expected applications.
+fn wait_for_entries(panel: &mut ControlPanel, count: usize) {
+    wait_for(panel, |panel| {
+        return entry_texts(panel).len() == count;
+    });
 }
 
 /// Expands the focused section, waits for its rows, and collapses it again.
@@ -137,50 +147,41 @@ fn lists_only_third_party_applications_by_default() {
     expect_buckets(&mock, &THIRD_PARTY);
 
     let mut panel = panel_for(&mock, ANDROID_13);
-    assert!(!checkbox_checked(&panel));
     assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == THIRD_PARTY.len();
-    });
+    wait_for_entries(&mut panel, THIRD_PARTY.len());
 
     let expected = vec![
         String::from("com.example.alpha  active"),
         String::from("com.example.bravo  active"),
     ];
     assert_eq!(entry_texts(&panel), expected);
+    assert_eq!(listings(&mock, false), 1);
+    assert_eq!(listings(&mock, true), 0);
     mock.assert_complete();
 }
 
 #[test]
-fn reaches_the_checkbox_and_shows_system_applications() {
+fn includes_system_applications_when_the_filter_is_enabled() {
     let mock = MockAdb::new();
     expect_listing(&mock, &THIRD_PARTY, false);
     expect_buckets(&mock, &THIRD_PARTY);
-    // Ticking the checkbox reads the inventory again, this time unfiltered.
     expect_listing(&mock, &ALL_APPLICATIONS, true);
     expect_buckets(&mock, &ALL_APPLICATIONS);
 
     let mut panel = panel_for(&mock, ANDROID_13);
     assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == THIRD_PARTY.len();
-    });
+    wait_for_entries(&mut panel, THIRD_PARTY.len());
 
-    // The strip is a focus target of its own, so it takes SPACE while the
-    // cursor of the sections stays where it is.
-    assert!(!checkbox_checked(&panel));
-    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
-    assert!(checkbox_checked(&panel));
+    assert!(set_filter(&mut panel, true));
+    wait_for_entries(&mut panel, ALL_APPLICATIONS.len());
 
-    wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == ALL_APPLICATIONS.len();
-    });
     let expected = vec![
         String::from("com.android.systemui  active"),
         String::from("com.example.alpha  active"),
         String::from("com.example.bravo  active"),
     ];
     assert_eq!(entry_texts(&panel), expected);
+    assert_eq!(listings(&mock, true), 1);
     mock.assert_complete();
 }
 
@@ -197,16 +198,17 @@ fn applies_the_filter_to_every_section() {
 
     let mut panel = panel_for(&mock, ANDROID_13);
     assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == THIRD_PARTY.len();
-    });
+    wait_for_entries(&mut panel, THIRD_PARTY.len());
     assert!(panel.handle_key(KeyCode::Char(' ')));
 
-    show_system_apps(&mut panel);
+    assert!(set_filter(&mut panel, true));
+    wait_for(&mut panel, |_| {
+        return listings(&mock, true) == 1;
+    });
 
     // Walk the sections from the bottom up: Doze Whitelist, App Inactive,
-    // AppOps and Standby Buckets. The cursor belongs to the sections, so the
-    // strip never takes it away.
+    // AppOps and Standby Buckets. Every one of them works from the same
+    // filtered inventory.
     for _ in 0..3 {
         assert!(panel.handle_key(KeyCode::Down));
     }
@@ -219,83 +221,63 @@ fn applies_the_filter_to_every_section() {
 }
 
 #[test]
-fn leaves_the_applications_alone_while_the_checkbox_has_focus() {
+fn reads_the_inventory_once_per_filter_change() {
+    let mock = MockAdb::new();
+    expect_listing(&mock, &THIRD_PARTY, false);
+    expect_listing(&mock, &ALL_APPLICATIONS, true);
+
+    let mut panel = panel_for(&mock, ANDROID_13);
+    panel.poll();
+    wait_for(&mut panel, |_| {
+        return listings(&mock, false) == 1;
+    });
+
+    assert!(set_filter(&mut panel, true));
+    wait_for(&mut panel, |_| {
+        return listings(&mock, true) == 1;
+    });
+
+    // Polling again neither repeats the read nor starts another one, and the
+    // setting itself cannot be changed twice.
+    for _ in 0..20 {
+        panel.poll();
+    }
+    assert!(!set_filter(&mut panel, true));
+    assert_eq!(listings(&mock, false), 1);
+    assert_eq!(listings(&mock, true), 1);
+    mock.assert_complete();
+}
+
+#[test]
+fn keeps_the_inventory_when_a_refresh_fails() {
     let mock = MockAdb::new();
     expect_listing(&mock, &THIRD_PARTY, false);
     expect_buckets(&mock, &THIRD_PARTY);
+    // The refresh cannot read the list, so the applications that are already
+    // there have to stay.
+    mock.expect(
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
+        MockResponse::failure("error: device offline"),
+    );
 
     let mut panel = panel_for(&mock, ANDROID_13);
     assert!(panel.handle_key(KeyCode::Char(' ')));
+    wait_for_entries(&mut panel, THIRD_PARTY.len());
+
+    assert!(panel.refresh_inventory());
     wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == THIRD_PARTY.len();
+        for status in status_texts(panel) {
+            if status.contains("could not list applications") {
+                return true;
+            }
+        }
+        return false;
     });
-    // The strip has the focus, so the arrows never reach an application and no
-    // command is sent.
-    assert!(!panel.handle_overlay_key(KeyCode::Left));
-    assert!(!panel.handle_overlay_key(KeyCode::Right));
 
     let expected = vec![
         String::from("com.example.alpha  active"),
         String::from("com.example.bravo  active"),
     ];
     assert_eq!(entry_texts(&panel), expected);
-    mock.assert_complete();
-}
-
-#[test]
-fn keeps_the_strip_visible_while_the_content_scrolls() {
-    let mock = MockAdb::new();
-    expect_listing(&mock, &THIRD_PARTY, false);
-    expect_buckets(&mock, &THIRD_PARTY);
-
-    let mut panel = panel_for(&mock, ANDROID_13);
-    let strip = overlay_texts(&panel);
-    assert_eq!(strip, vec![String::from("Show System Apps")]);
-
-    assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == THIRD_PARTY.len();
-    });
-    assert!(panel.set_viewport(2));
-
-    for _ in 0..5 {
-        assert!(panel.handle_key(KeyCode::Down));
-    }
-
-    // Scrolling never moves the strip, and the strip is never part of the
-    // scrollable content.
-    assert_eq!(overlay_texts(&panel), strip);
-    for line in overlay_lines(&panel) {
-        assert!(!line.is_focused(), "the strip looks focused without focus");
-    }
-    for line in panel.lines(true) {
-        assert!(!line.is_checkbox(), "the strip leaked into the content");
-    }
-    mock.assert_complete();
-}
-
-#[test]
-fn refreshes_the_sections_when_the_filter_changes() {
-    let mock = MockAdb::new();
-    expect_listing(&mock, &THIRD_PARTY, false);
-    expect_buckets(&mock, &THIRD_PARTY);
-    expect_listing(&mock, &ALL_APPLICATIONS, true);
-    expect_buckets(&mock, &ALL_APPLICATIONS);
-
-    let mut panel = panel_for(&mock, ANDROID_13);
-    assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == THIRD_PARTY.len();
-    });
-
-    show_system_apps(&mut panel);
-    wait_for(&mut panel, |panel| {
-        return entry_texts(panel).len() == ALL_APPLICATIONS.len();
-    });
-
-    // The checkbox keeps its new setting and the section shows the refreshed
-    // list.
-    assert!(checkbox_checked(&panel));
-    assert!(lists_system_application(&panel));
     mock.assert_complete();
 }

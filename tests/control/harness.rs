@@ -6,6 +6,7 @@ use std::time::Duration;
 use bloatdroid::control::ControlLine;
 use bloatdroid::control::ControlPanel;
 use bloatdroid::control::ControlTarget;
+use bloatdroid::discover::apps::ApplicationFilter;
 use bloatdroid::log::LogLevel;
 
 use crate::common::MockAdb;
@@ -151,12 +152,8 @@ pub fn log_has(panel: &ControlPanel, level: LogLevel, message: &str) -> bool {
     return false;
 }
 
-/// Returns the lines of the control strip that stays at the bottom.
-pub fn overlay_lines(panel: &ControlPanel) -> Vec<ControlLine> {
-    return panel.overlay_lines(false);
-}
-
-/// Returns the lines of the control strip as it looks while it has the focus.
-pub fn focused_overlay_lines(panel: &ControlPanel) -> Vec<ControlLine> {
-    return panel.overlay_lines(true);
+/// Applies the global system application setting to the panel.
+pub fn set_filter(panel: &mut ControlPanel, show_system: bool) -> bool {
+    let filter = ApplicationFilter::with_show_system(show_system);
+    return panel.set_filter(filter);
 }

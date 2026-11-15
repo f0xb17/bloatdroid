@@ -28,11 +28,6 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::adb::AdbClient;
-use crate::control::ControlPanel;
-use crate::discover::DeviceScanner;
-use crate::discover::REFRESH_INTERVAL;
-
-use refresh::RefreshWorker;
 
 /// How long the event loop waits for a terminal event before it looks for
 /// discovery results again.
@@ -45,13 +40,8 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// busy-waiting. ADB never runs on this thread: a worker scans in the
 /// background.
 pub fn run() -> io::Result<()> {
-    let client = AdbClient::new();
-    let scanner = DeviceScanner::new(client.clone());
-    let refresh = RefreshWorker::spawn(scanner, REFRESH_INTERVAL)?;
-    let control = ControlPanel::new(client)?;
-
     let mut session = TerminalSession::start()?;
-    let mut app = App::new(refresh, control);
+    let mut app = App::new(AdbClient::new())?;
 
     while app.is_running() {
         if app.needs_redraw() {

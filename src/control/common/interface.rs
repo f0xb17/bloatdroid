@@ -2,8 +2,9 @@
 
 use crossterm::event::KeyCode;
 
+use crate::discover::apps::Inventory;
+
 use super::entry::ControlEntry;
-use super::inventory::Inventory;
 use super::section::Section;
 use super::state::SectionState;
 use super::target::ControlTarget;
@@ -34,8 +35,9 @@ pub trait ControlSection {
 
     /// Adopts the package inventory of the selected device.
     ///
-    /// The panel reads the installed packages once and hands the same value to
-    /// every section, so no section asks the device for the package list.
+    /// The panel reads the installed packages once with the global system
+    /// application filter and hands the same value to every section, so no
+    /// section asks the device for the package list and no section filters it.
     /// Returns `true` when the section changed.
     fn set_inventory(&mut self, _inventory: Inventory) -> bool {
         return false;

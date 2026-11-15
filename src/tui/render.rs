@@ -30,8 +30,14 @@ const EXPANDED_INDICATOR: &str = "▼";
 /// The fill of a section header that does not hold the cursor.
 const HEADER_BACKGROUND: Color = Color::Yellow;
 
-/// The fill of the control strip that does not hold the cursor.
-const STRIP_BACKGROUND: Color = Color::Rgb(60, 60, 60);
+/// The fill of the system application checkbox that does not hold the cursor.
+const FILTER_BACKGROUND: Color = Color::Rgb(60, 60, 60);
+
+/// How many rows the system application checkbox takes in its panel.
+const FILTER_HEIGHT: u16 = 1;
+
+/// The label of the checkbox that decides whether system applications show.
+const FILTER_LABEL: &str = "Show System Apps";
 
 /// The fill of a section header that holds the cursor.
 ///
@@ -98,11 +104,10 @@ fn render_panel(frame: &mut Frame, app: &mut App, area: Rect, panel: Panel) {
 
     match panel {
         Panel::DeviceSelection => {
-            let body = Paragraph::new(device_lines(app));
-            frame.render_widget(body, inner);
+            render_device_selection(frame, app, inner);
         }
         Panel::StandbyCrates => {
-            render_control(frame, app, inner);
+            render_crates(frame, app, inner);
         }
         Panel::Operations => {
             render_operations(frame, app, inner);
@@ -138,23 +143,54 @@ fn render_operations(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// Draws the control sections and the control strip inside the Standby Crates
-/// panel.
+/// Draws the device list and the persistent system application checkbox.
 ///
-/// The strip keeps the bottom rows of the panel for itself and is drawn last,
-/// so the scrolling content above it can never cover it. The scrollable content
-/// is told about the rows the strip takes, so no line of it is hidden behind the
-/// strip.
-fn render_control(frame: &mut Frame, app: &mut App, area: Rect) {
-    let overlay_focused = app.overlay_is_focused();
-    let content_focused = app.content_is_focused();
-    let strip = app.control().overlay_lines(overlay_focused);
-    let strip_height = u16::try_from(strip.len()).unwrap_or(u16::MAX);
-    let content_height = area.height.saturating_sub(strip_height);
-    app.set_control_viewport(usize::from(content_height));
+/// The checkbox keeps the bottom row of the panel for itself, so it stays
+/// visible whatever the device list looks like and while the list is navigated.
+/// It is a control of the panel, not a panel of its own: everything is drawn
+/// inside the one border the two share.
+fn render_device_selection(frame: &mut Frame, app: &App, area: Rect) {
+    let list_height = area.height.saturating_sub(FILTER_HEIGHT);
+    let list = Rect::new(area.x, area.y, area.width, list_height);
+    let body = Paragraph::new(device_lines(app));
+    frame.render_widget(body, list);
 
-    render_control_content(frame, app.control(), area, content_focused);
-    render_control_strip(frame, area, &strip);
+    let top = area.y.saturating_add(list_height);
+    let row = Rect::new(area.x, top, area.width, FILTER_HEIGHT);
+    render_filter_checkbox(frame, row, app);
+}
+
+/// Draws the checkbox that decides whether system applications show.
+///
+/// The checkbox marks the focus with a cursor mark and the focus tone, so it is
+/// recognizable as the focused control while the device list above it keeps its
+/// selection mark.
+fn render_filter_checkbox(frame: &mut Frame, row: Rect, app: &App) {
+    let focused = app.filter_is_focused();
+    let marker = if focused {
+        "> "
+    } else {
+        "  "
+    };
+    let checkbox = if app.show_system() {
+        "[x]"
+    } else {
+        "[ ]"
+    };
+    let text = format!("{marker}{checkbox} {FILTER_LABEL}");
+    let body = Paragraph::new(text).style(filter_style(focused));
+    frame.render_widget(body, row);
+}
+
+/// Draws the expandable sections inside the Standby Crates panel.
+///
+/// The panel is told how many rows it has room for, so it scrolls to keep its
+/// cursor visible. The cursor mark is shown only while the sections hold the
+/// focus.
+fn render_crates(frame: &mut Frame, app: &mut App, area: Rect) {
+    app.set_control_viewport(usize::from(area.height));
+    let focused = app.crates_are_focused();
+    render_control_content(frame, app.control(), area, focused);
 }
 
 /// Draws the control sections inside the Standby Crates panel.
@@ -181,55 +217,19 @@ fn render_control_content(
     }
 }
 
-/// Draws the control strip over the bottom rows of the area.
-fn render_control_strip(frame: &mut Frame, area: Rect, lines: &[ControlLine]) {
-    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    if height == 0 {
-        return;
-    }
-
-    let top = area.y.saturating_add(area.height.saturating_sub(height));
-    let strip = Rect::new(area.x, top, area.width, height);
-    frame.render_widget(Block::new().style(strip_style(false)), strip);
-
-    let mut y = top;
-    for line in lines {
-        let row = Rect::new(area.x, y, area.width, 1);
-        render_control_strip_line(frame, row, line);
-        y = y.saturating_add(1);
-    }
-}
-
-/// Draws one line of the control strip.
-fn render_control_strip_line(frame: &mut Frame, row: Rect, line: &ControlLine) {
-    let marker = if line.is_focused() {
-        "> "
-    } else {
-        "  "
-    };
-    let checkbox = if line.is_checked() {
-        "[x]"
-    } else {
-        "[ ]"
-    };
-    let text = format!("{marker}{checkbox} {}", line.text());
-    let body = Paragraph::new(text).style(strip_style(line.is_focused()));
-    frame.render_widget(body, row);
-}
-
-/// Returns the style of the control strip.
+/// Returns the style of the system application checkbox.
 ///
-/// The strip uses a fill of its own so it reads as a bar rather than as another
-/// section, and it switches to the focus tone while the cursor is on it, so the
-/// focused control is recognizable at a glance.
-fn strip_style(focused: bool) -> Style {
+/// The checkbox uses a fill of its own so it reads as a control rather than as
+/// another list row, and it switches to the focus tone while the cursor is on
+/// it, so the focused control is recognizable at a glance.
+fn filter_style(focused: bool) -> Style {
     let style = if focused {
         Style::new()
             .fg(Color::Black)
             .bg(HEADER_FOCUSED_BACKGROUND)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(Color::Gray).bg(STRIP_BACKGROUND)
+        Style::new().fg(Color::Gray).bg(FILTER_BACKGROUND)
     };
     return style;
 }

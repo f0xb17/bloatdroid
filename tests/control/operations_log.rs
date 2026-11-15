@@ -15,6 +15,7 @@ use super::harness::SERIAL;
 use super::harness::entry_texts;
 use super::harness::log_has;
 use super::harness::panel_for;
+use super::harness::set_filter;
 use super::harness::wait_for;
 use super::harness::wait_for_commands;
 
@@ -305,7 +306,7 @@ fn logs_a_verified_doze_whitelist_change() {
 }
 
 #[test]
-fn logs_the_system_application_filter() {
+fn logs_the_inventory_of_a_filter_change() {
     let mock = MockAdb::new();
     expect_listing(&mock, &["com.example.alpha"]);
     mock.expect(
@@ -320,11 +321,10 @@ fn logs_the_system_application_filter() {
         return log_has(panel, LogLevel::Success, "Found 1 application.");
     });
 
-    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
+    assert!(set_filter(&mut panel, true));
 
     wait_for(&mut panel, |panel| {
         return log_has(panel, LogLevel::Success, "Found 2 applications.");
     });
-    assert!(log_has(&panel, LogLevel::Info, "Showing system applications."));
     mock.assert_complete();
 }

@@ -1,8 +1,8 @@
-//! Tests for the global focus order and the two Standby Crates focus targets.
+//! Tests for the global focus order and the focus marks of the panels.
 //!
 //! The focus targets are a plain enumeration, so their order is tested
-//! directly. The two targets of the Standby Crates panel are then driven
-//! through the panel, which is where their input is separated.
+//! directly. The cursor marks of the sections are then driven through the
+//! panel, which is where the panel decides whether it shows its cursor.
 
 use crossterm::event::KeyCode;
 
@@ -16,46 +16,67 @@ use crate::common::MockResponse;
 use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
-use super::harness::focused_overlay_lines;
 use super::harness::focused_text;
 use super::harness::header_expansion;
-use super::harness::overlay_lines;
 use super::harness::panel_for;
+use super::harness::set_filter;
 use super::harness::wait_for;
 
-/// Expects the package listing of one device.
-fn expect_listing(mock: &MockAdb, packages: &[&str], include_system: bool) {
+/// Expects the filtered package listing of the device.
+fn expect_listing(mock: &MockAdb, packages: &[&str]) {
     let mut listing = String::new();
     for package in packages {
         listing.push_str("package:");
         listing.push_str(package);
         listing.push('\n');
     }
-
-    let arguments = if include_system {
-        vec!["-s", SERIAL, "shell", "pm", "list", "packages"]
-    } else {
-        vec!["-s", SERIAL, "shell", "pm", "list", "packages", "-3"]
-    };
-    mock.expect(&arguments, MockResponse::output(listing));
-}
-
-/// Expects the standby bucket read of one application.
-fn expect_bucket(mock: &MockAdb, package: &str, bucket: &str) {
     mock.expect(
-        &["-s", SERIAL, "shell", "am", "get-standby-bucket", package],
-        MockResponse::output(bucket),
+        &["-s", SERIAL, "shell", "pm", "list", "packages", "-3"],
+        MockResponse::output(listing),
     );
 }
 
-/// Returns whether the checkbox of the strip is ticked.
-fn checkbox_checked(panel: &ControlPanel) -> bool {
-    for line in overlay_lines(panel) {
-        if line.is_checkbox() {
-            return line.is_checked();
+/// Expects the complete package listing of the device.
+fn expect_full_listing(mock: &MockAdb, packages: &[&str]) {
+    let mut listing = String::new();
+    for package in packages {
+        listing.push_str("package:");
+        listing.push_str(package);
+        listing.push('\n');
+    }
+    mock.expect(
+        &["-s", SERIAL, "shell", "pm", "list", "packages"],
+        MockResponse::output(listing),
+    );
+}
+
+/// Expects the standby bucket read of one application.
+fn expect_bucket(mock: &MockAdb, package: &str) {
+    mock.expect(
+        &["-s", SERIAL, "shell", "am", "get-standby-bucket", package],
+        MockResponse::output("active"),
+    );
+}
+
+/// Returns how often the filtered package list was read.
+fn filtered_listings(mock: &MockAdb) -> usize {
+    let wanted = vec![
+        String::from("-s"),
+        String::from(SERIAL),
+        String::from("shell"),
+        String::from("pm"),
+        String::from("list"),
+        String::from("packages"),
+        String::from("-3"),
+    ];
+
+    let mut count = 0;
+    for call in mock.calls() {
+        if call == wanted {
+            count += 1;
         }
     }
-    return false;
+    return count;
 }
 
 /// Polls until the expanded section shows the expected number of rows.
@@ -69,9 +90,9 @@ fn wait_for_rows(panel: &mut ControlPanel, count: usize) {
 fn tabs_forward_through_every_focus_target() {
     let expected = [
         Focus::DeviceSelection,
+        Focus::DeviceSelectionFilter,
         Focus::RemovePackages,
-        Focus::StandbyCratesOverlay,
-        Focus::StandbyCratesContent,
+        Focus::StandbyCrates,
         Focus::Operations,
         // The last target wraps around to the first one.
         Focus::DeviceSelection,
@@ -89,9 +110,9 @@ fn shift_tabs_backward_through_every_focus_target() {
     let expected = [
         Focus::DeviceSelection,
         Focus::Operations,
-        Focus::StandbyCratesContent,
-        Focus::StandbyCratesOverlay,
+        Focus::StandbyCrates,
         Focus::RemovePackages,
+        Focus::DeviceSelectionFilter,
         // The first target wraps around to the last one.
         Focus::DeviceSelection,
     ];
@@ -104,36 +125,25 @@ fn shift_tabs_backward_through_every_focus_target() {
 }
 
 #[test]
-fn keeps_both_standby_targets_in_one_panel() {
-    assert_eq!(Focus::StandbyCratesOverlay.panel(), Panel::StandbyCrates);
-    assert_eq!(Focus::StandbyCratesContent.panel(), Panel::StandbyCrates);
-    assert_ne!(Focus::StandbyCratesOverlay, Focus::StandbyCratesContent);
-
+fn keeps_the_checkbox_in_the_device_selection_panel() {
     assert_eq!(Focus::DeviceSelection.panel(), Panel::DeviceSelection);
+    assert_eq!(Focus::DeviceSelectionFilter.panel(), Panel::DeviceSelection);
+    // The checkbox is a control of the panel, not a panel of its own.
+    assert_ne!(Focus::DeviceSelectionFilter, Focus::DeviceSelection);
+
     assert_eq!(Focus::RemovePackages.panel(), Panel::RemovePackages);
+    assert_eq!(Focus::StandbyCrates.panel(), Panel::StandbyCrates);
     assert_eq!(Focus::Operations.panel(), Panel::Operations);
 }
 
 #[test]
-fn marks_the_area_that_holds_the_focus() {
+fn marks_the_sections_only_while_they_have_the_focus() {
     let mock = MockAdb::new();
     let panel = panel_for(&mock, ANDROID_13);
 
-    for line in focused_overlay_lines(&panel) {
-        assert!(line.is_focused(), "the focused strip has no focus mark");
-    }
-    for line in overlay_lines(&panel) {
-        assert!(!line.is_focused(), "the unfocused strip looks focused");
-    }
-
-    // The cursor of the sections is shown only while the sections have focus.
-    let mut marked = 0;
     for line in panel.lines(false) {
-        if line.is_focused() {
-            marked += 1;
-        }
+        assert!(!line.is_focused(), "a cursor was shown without focus");
     }
-    assert_eq!(marked, 0, "the sections showed a cursor without focus");
 
     let mut marked = 0;
     for line in panel.lines(true) {
@@ -146,93 +156,49 @@ fn marks_the_area_that_holds_the_focus() {
 }
 
 #[test]
-fn toggles_the_checkbox_only_from_the_overlay() {
+fn the_sections_cannot_change_the_application_filter() {
     let mock = MockAdb::new();
-    expect_listing(&mock, &["com.example.alpha"], false);
-    expect_bucket(&mock, "com.example.alpha", "active");
-    // Ticking the checkbox reads the inventory again, this time unfiltered.
-    expect_listing(&mock, &["com.android.systemui", "com.example.alpha"], true);
-    expect_bucket(&mock, "com.android.systemui", "active");
-    expect_bucket(&mock, "com.example.alpha", "active");
+    expect_listing(&mock, &["com.example.alpha"]);
+    expect_bucket(&mock, "com.example.alpha");
 
     let mut panel = panel_for(&mock, ANDROID_13);
-
-    // SPACE from the section content expands the section and leaves the
-    // checkbox alone.
     assert!(panel.handle_key(KeyCode::Char(' ')));
     wait_for_rows(&mut panel, 1);
-    assert_eq!(header_expansion(&panel), vec![true, false, false, false]);
-    assert!(!checkbox_checked(&panel));
+    assert!(panel.handle_key(KeyCode::Char(' ')));
 
-    // SPACE from the overlay ticks the checkbox and refreshes the inventory.
-    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
-    wait_for_rows(&mut panel, 2);
-    assert!(checkbox_checked(&panel));
+    // Expanding and collapsing the section never asks for the complete
+    // inventory: the setting belongs to the application, not to a section.
+    assert_eq!(filtered_listings(&mock), 1);
     mock.assert_complete();
 }
 
 #[test]
-fn does_not_change_applications_from_the_overlay() {
+fn keeps_the_expansion_and_the_selection_across_a_filter_change() {
     let mock = MockAdb::new();
-    expect_listing(&mock, &["com.example.alpha"], false);
-    expect_bucket(&mock, "com.example.alpha", "active");
+    expect_listing(&mock, &["com.example.alpha", "com.example.mike"]);
+    expect_bucket(&mock, "com.example.alpha");
+    expect_bucket(&mock, "com.example.mike");
+    expect_full_listing(
+        &mock,
+        &["com.android.systemui", "com.example.alpha", "com.example.mike"],
+    );
+    expect_bucket(&mock, "com.android.systemui");
+    expect_bucket(&mock, "com.example.alpha");
+    expect_bucket(&mock, "com.example.mike");
 
     let mut panel = panel_for(&mock, ANDROID_13);
     assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for_rows(&mut panel, 1);
-    // The cursor moves from the header onto the application.
+    wait_for_rows(&mut panel, 2);
     assert!(panel.handle_key(KeyCode::Down));
     assert_eq!(
         focused_text(&panel),
         Some(String::from("com.example.alpha  active"))
     );
 
-    let commands = mock.calls().len();
-
-    // The arrows belong to the sections, so the overlay ignores them and the
-    // application keeps its value.
-    assert!(!panel.handle_overlay_key(KeyCode::Left));
-    assert!(!panel.handle_overlay_key(KeyCode::Right));
-    assert!(!panel.handle_overlay_key(KeyCode::Up));
-    assert!(!panel.handle_overlay_key(KeyCode::Down));
-
-    assert_eq!(mock.calls().len(), commands, "the overlay sent a command");
-    assert_eq!(
-        entry_texts(&panel),
-        vec![String::from("com.example.alpha  active")]
-    );
-    mock.assert_complete();
-}
-
-#[test]
-fn keeps_the_expansion_and_the_selection_across_the_focus_targets() {
-    let mock = MockAdb::new();
-    expect_listing(&mock, &["com.example.alpha", "com.example.mike"], false);
-    expect_bucket(&mock, "com.example.alpha", "active");
-    expect_bucket(&mock, "com.example.mike", "working_set");
-    expect_listing(&mock, &["com.example.alpha", "com.example.mike"], true);
-    expect_bucket(&mock, "com.example.alpha", "active");
-    expect_bucket(&mock, "com.example.mike", "working_set");
-
-    let mut panel = panel_for(&mock, ANDROID_13);
-    assert!(panel.handle_key(KeyCode::Char(' ')));
-    wait_for_rows(&mut panel, 2);
-    assert!(panel.handle_key(KeyCode::Down));
-
-    // Keys the overlay does not use leave the sections as they are.
-    assert!(!panel.handle_overlay_key(KeyCode::Up));
-    assert_eq!(header_expansion(&panel), vec![true, false, false, false]);
-    assert_eq!(
-        focused_text(&panel),
-        Some(String::from("com.example.alpha  active"))
-    );
-
-    // Changing the filter from the overlay keeps the expansion and puts the
-    // cursor back on the same application.
-    assert!(panel.handle_overlay_key(KeyCode::Char(' ')));
-    wait_for(&mut panel, |_| {
-        return mock.calls().len() == 6;
-    });
+    // The filter changes while a section is expanded and an application is
+    // selected.
+    assert!(set_filter(&mut panel, true));
+    wait_for_rows(&mut panel, 3);
 
     assert_eq!(header_expansion(&panel), vec![true, false, false, false]);
     assert_eq!(

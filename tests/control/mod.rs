@@ -3,13 +3,13 @@
 mod appops;
 mod buckets;
 mod doze;
+mod filter;
 mod focus;
 mod harness;
 mod inactive;
 mod inventory;
 mod layout;
 mod operations_log;
-mod overlay;
 mod panel;
 mod scanning;
 mod scrolling;
