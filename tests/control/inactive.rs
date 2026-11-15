@@ -5,6 +5,7 @@ use crossterm::event::KeyCode;
 use bloatdroid::control::ControlPanel;
 use bloatdroid::control::ControlTarget;
 use bloatdroid::control::inactive::InactiveState;
+use bloatdroid::log::LogLevel;
 
 use crate::common::MockAdb;
 use crate::common::MockResponse;
@@ -12,6 +13,7 @@ use crate::common::MockResponse;
 use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
+use super::harness::log_has;
 use super::harness::panel_for;
 use super::harness::status_texts;
 use super::harness::wait_for;
@@ -66,6 +68,20 @@ fn expect_change(
         &["-s", serial, "shell", "am", "get-inactive", package],
         MockResponse::output(reported),
     );
+}
+
+/// Waits until the device confirmed the change to the given state.
+///
+/// The mock records the commands before the section applies their result, so
+/// the confirmation is what makes the wait deterministic.
+fn wait_for_state(panel: &mut ControlPanel, mock: &MockAdb, state: &str) {
+    let message = format!(
+        "App Inactive state successfully changed to {}.",
+        state.to_ascii_uppercase()
+    );
+    wait_for_commands(panel, mock, |panel| {
+        return log_has(panel, LogLevel::Success, message.as_str());
+    });
 }
 
 /// Expands the App Inactive section, which follows the AppOps header.
@@ -260,7 +276,7 @@ fn toggles_to_inactive_and_verifies_it() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_state(&mut panel, &mock, "inactive");
 
     let expected = vec![String::from("com.example.app  inactive")];
     assert_eq!(entry_texts(&panel), expected);
@@ -280,7 +296,7 @@ fn toggles_to_active_and_verifies_it() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Left));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_state(&mut panel, &mock, "active");
 
     let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
@@ -320,7 +336,7 @@ fn ignores_changes_while_another_is_pending() {
     assert!(panel.handle_key(KeyCode::Right));
     // The first change is still in flight, so this one is ignored.
     assert!(!panel.handle_key(KeyCode::Left));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_state(&mut panel, &mock, "inactive");
 
     let expected = vec![String::from("com.example.app  inactive")];
     assert_eq!(entry_texts(&panel), expected);

@@ -5,6 +5,7 @@ use crossterm::event::KeyCode;
 use bloatdroid::control::ControlPanel;
 use bloatdroid::control::ControlTarget;
 use bloatdroid::control::appops::AppOpMode;
+use bloatdroid::log::LogLevel;
 
 use crate::common::MockAdb;
 use crate::common::MockResponse;
@@ -12,6 +13,7 @@ use crate::common::MockResponse;
 use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
+use super::harness::log_has;
 use super::harness::panel_for;
 use super::harness::status_texts;
 use super::harness::wait_for;
@@ -75,6 +77,20 @@ fn expect_change(
         &["-s", serial, "shell", "cmd", "appops", "get", package, OPERATION],
         MockResponse::output(reported),
     );
+}
+
+/// Waits until the device confirmed the change to the given mode.
+///
+/// The mock records the commands before the section applies their result, so
+/// the confirmation is what makes the wait deterministic.
+fn wait_for_mode(panel: &mut ControlPanel, mock: &MockAdb, mode: &str) {
+    let message = format!(
+        "AppOps mode successfully changed to {}.",
+        mode.to_ascii_uppercase()
+    );
+    wait_for_commands(panel, mock, |panel| {
+        return log_has(panel, LogLevel::Success, message.as_str());
+    });
 }
 
 /// Expands the AppOps section, which follows the Standby Buckets header.
@@ -321,7 +337,7 @@ fn changes_a_mode_and_verifies_it() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_mode(&mut panel, &mock, "default");
 
     let expected = vec![String::from("com.example.app  default")];
     assert_eq!(entry_texts(&panel), expected);
@@ -351,7 +367,7 @@ fn moves_back_to_the_previous_mode() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Left));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_mode(&mut panel, &mock, "allow");
 
     let expected = vec![String::from("com.example.app  allow")];
     assert_eq!(entry_texts(&panel), expected);
@@ -380,7 +396,7 @@ fn wraps_from_the_restricted_mode_to_allow() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_mode(&mut panel, &mock, "allow");
 
     let expected = vec![String::from("com.example.app  allow")];
     assert_eq!(entry_texts(&panel), expected);
@@ -409,7 +425,7 @@ fn changes_an_unreadable_mode_to_default() {
 
     focus_first_application(&mut panel);
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_mode(&mut panel, &mock, "default");
 
     let expected = vec![String::from("com.example.app  default")];
     assert_eq!(entry_texts(&panel), expected);
@@ -440,7 +456,7 @@ fn ignores_changes_while_another_is_pending() {
     assert!(panel.handle_key(KeyCode::Right));
     // The first change is still in flight, so this one is ignored.
     assert!(!panel.handle_key(KeyCode::Left));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_mode(&mut panel, &mock, "default");
 
     let expected = vec![String::from("com.example.app  default")];
     assert_eq!(entry_texts(&panel), expected);

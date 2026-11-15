@@ -170,7 +170,8 @@ impl ControlPanel {
             return false;
         }
         self.filter = filter;
-        return self.request_inventory();
+        self.request_inventory();
+        return true;
     }
 
     /// Tells the panel how many lines the sections have room for.

@@ -55,17 +55,26 @@ pub fn wait_for(
     panic!("the control panel did not reach the expected state in time");
 }
 
-/// Polls the panel until the mock answered every expected command.
-pub fn wait_for_commands(panel: &mut ControlPanel, mock: &MockAdb) {
+/// Polls the panel until the mock answered every expected command and the
+/// panel applied the answers.
+///
+/// The mock records a command as soon as it answers it, which happens before
+/// the worker thread delivers the result to the panel. Waiting for the commands
+/// alone would therefore let a test assert on a state the panel has not applied
+/// yet, so the effect the test expects is part of the condition.
+pub fn wait_for_commands(
+    panel: &mut ControlPanel,
+    mock: &MockAdb,
+    applied: impl Fn(&ControlPanel) -> bool,
+) {
     for _ in 0..WAIT_LIMIT {
         panel.poll();
-        if mock.is_complete() {
-            panel.poll();
+        if mock.is_complete() && applied(panel) {
             return;
         }
         thread::sleep(WAIT_STEP);
     }
-    panic!("the control worker did not answer in time");
+    panic!("the control worker did not answer and apply its work in time");
 }
 
 /// Returns the text of the section headers, in display order.

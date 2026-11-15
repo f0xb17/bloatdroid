@@ -7,6 +7,7 @@
 use crossterm::event::KeyCode;
 
 use bloatdroid::control::ControlPanel;
+use bloatdroid::log::LogLevel;
 
 use crate::common::MockAdb;
 use crate::common::MockResponse;
@@ -14,6 +15,7 @@ use crate::common::MockResponse;
 use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
+use super::harness::log_has;
 use super::harness::panel_for;
 use super::harness::set_filter;
 use super::harness::status_texts;
@@ -227,14 +229,13 @@ fn reads_the_inventory_once_per_filter_change() {
     expect_listing(&mock, &ALL_APPLICATIONS, true);
 
     let mut panel = panel_for(&mock, ANDROID_13);
-    panel.poll();
-    wait_for(&mut panel, |_| {
-        return listings(&mock, false) == 1;
+    wait_for(&mut panel, |panel| {
+        return log_has(panel, LogLevel::Success, "Found 2 applications.");
     });
 
     assert!(set_filter(&mut panel, true));
-    wait_for(&mut panel, |_| {
-        return listings(&mock, true) == 1;
+    wait_for(&mut panel, |panel| {
+        return log_has(panel, LogLevel::Success, "Found 3 applications.");
     });
 
     // Polling again neither repeats the read nor starts another one, and the

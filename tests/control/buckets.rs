@@ -4,6 +4,7 @@ use crossterm::event::KeyCode;
 
 use bloatdroid::control::ControlPanel;
 use bloatdroid::control::buckets::StandbyBucket;
+use bloatdroid::log::LogLevel;
 
 use crate::common::MockAdb;
 use crate::common::MockResponse;
@@ -14,6 +15,7 @@ use super::harness::SERIAL;
 use super::harness::entry_texts;
 use super::harness::focused_text;
 use super::harness::header_expansion;
+use super::harness::log_has;
 use super::harness::panel_for;
 use super::harness::status_texts;
 use super::harness::wait_for;
@@ -70,6 +72,20 @@ fn expand_buckets(panel: &mut ControlPanel) {
 fn wait_for_rows(panel: &mut ControlPanel, count: usize) {
     wait_for(panel, |panel| {
         return entry_texts(panel).len() == count;
+    });
+}
+
+/// Waits until the device confirmed the change to the given bucket.
+///
+/// The mock records the commands before the section applies their result, so
+/// the confirmation is what makes the wait deterministic.
+fn wait_for_bucket(panel: &mut ControlPanel, mock: &MockAdb, bucket: &str) {
+    let message = format!(
+        "Standby bucket successfully changed to {}.",
+        bucket.to_ascii_uppercase()
+    );
+    wait_for_commands(panel, mock, |panel| {
+        return log_has(panel, LogLevel::Success, message.as_str());
     });
 }
 
@@ -143,7 +159,7 @@ fn changes_a_bucket_and_verifies_it() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_bucket(&mut panel, &mock, "frequent");
 
     let expected = vec![String::from("com.example.app  frequent")];
     assert_eq!(entry_texts(&panel), expected);
@@ -163,7 +179,7 @@ fn moves_back_towards_the_more_active_buckets() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Left));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_bucket(&mut panel, &mock, "active");
 
     let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
@@ -199,7 +215,7 @@ fn offers_restricted_from_android_11() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_bucket(&mut panel, &mock, "restricted");
 
     let expected = vec![String::from("com.example.app  restricted")];
     assert_eq!(entry_texts(&panel), expected);
@@ -519,7 +535,7 @@ fn cycles_from_a_numeric_bucket() {
     focus_first_application(&mut panel);
 
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_bucket(&mut panel, &mock, "frequent");
 
     let expected = vec![String::from("com.example.app  frequent")];
     assert_eq!(entry_texts(&panel), expected);

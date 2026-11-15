@@ -5,6 +5,7 @@
 
 use crossterm::event::KeyCode;
 
+use bloatdroid::control::ControlPanel;
 use bloatdroid::log::LogLevel;
 
 use crate::common::MockAdb;
@@ -34,10 +35,61 @@ fn expect_listing(mock: &MockAdb, packages: &[&str]) {
 }
 
 /// Polls until the expanded section shows the expected number of rows.
-fn wait_for_rows(panel: &mut bloatdroid::control::ControlPanel, count: usize) {
+fn wait_for_rows(panel: &mut ControlPanel, count: usize) {
     wait_for(panel, |panel| {
         return entry_texts(panel).len() == count;
     });
+}
+
+/// Waits until the mock answered every expected command and the log holds the
+/// given message.
+///
+/// The mock records the commands before the section applies their result, so
+/// the logged message is what makes the wait deterministic.
+fn wait_for_log(
+    panel: &mut ControlPanel,
+    mock: &MockAdb,
+    level: LogLevel,
+    message: &str,
+) {
+    wait_for_commands(panel, mock, |panel| {
+        return log_has(panel, level, message);
+    });
+}
+
+/// Expects one AppOps read of the application.
+fn expect_appops_read(mock: &MockAdb, mode: &str) {
+    mock.expect(
+        &[
+            "-s",
+            SERIAL,
+            "shell",
+            "cmd",
+            "appops",
+            "get",
+            "com.example.app",
+            "RUN_ANY_IN_BACKGROUND",
+        ],
+        MockResponse::output(format!("RUN_ANY_IN_BACKGROUND: {mode}\n")),
+    );
+}
+
+/// Expects one AppOps write of the application.
+fn expect_appops_write(mock: &MockAdb, mode: &str) {
+    mock.expect(
+        &[
+            "-s",
+            SERIAL,
+            "shell",
+            "cmd",
+            "appops",
+            "set",
+            "com.example.app",
+            "RUN_ANY_IN_BACKGROUND",
+            mode,
+        ],
+        MockResponse::output(""),
+    );
 }
 
 #[test]
@@ -88,7 +140,12 @@ fn logs_a_verified_standby_bucket_change() {
     wait_for_rows(&mut panel, 1);
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_log(
+        &mut panel,
+        &mock,
+        LogLevel::Success,
+        "Standby bucket successfully changed to FREQUENT.",
+    );
 
     assert!(log_has(
         &panel,
@@ -134,7 +191,12 @@ fn logs_a_rejected_standby_bucket_change() {
     wait_for_rows(&mut panel, 1);
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_log(
+        &mut panel,
+        &mock,
+        LogLevel::Error,
+        "Failed to change the standby bucket: the device kept `working_set`.",
+    );
 
     assert!(log_has(
         &panel,
@@ -148,46 +210,9 @@ fn logs_a_rejected_standby_bucket_change() {
 fn logs_a_rejected_appops_change() {
     let mock = MockAdb::new();
     expect_listing(&mock, &["com.example.app"]);
-    mock.expect(
-        &[
-            "-s",
-            SERIAL,
-            "shell",
-            "cmd",
-            "appops",
-            "get",
-            "com.example.app",
-            "RUN_ANY_IN_BACKGROUND",
-        ],
-        MockResponse::output("RUN_ANY_IN_BACKGROUND: allow\n"),
-    );
-    mock.expect(
-        &[
-            "-s",
-            SERIAL,
-            "shell",
-            "cmd",
-            "appops",
-            "set",
-            "com.example.app",
-            "RUN_ANY_IN_BACKGROUND",
-            "default",
-        ],
-        MockResponse::output(""),
-    );
-    mock.expect(
-        &[
-            "-s",
-            SERIAL,
-            "shell",
-            "cmd",
-            "appops",
-            "get",
-            "com.example.app",
-            "RUN_ANY_IN_BACKGROUND",
-        ],
-        MockResponse::output("RUN_ANY_IN_BACKGROUND: allow\n"),
-    );
+    expect_appops_read(&mock, "allow");
+    expect_appops_write(&mock, "default");
+    expect_appops_read(&mock, "allow");
 
     let mut panel = panel_for(&mock, ANDROID_13);
     assert!(panel.handle_key(KeyCode::Down));
@@ -195,7 +220,12 @@ fn logs_a_rejected_appops_change() {
     wait_for_rows(&mut panel, 1);
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_log(
+        &mut panel,
+        &mock,
+        LogLevel::Error,
+        "Failed to change the AppOps mode: the device kept `allow`.",
+    );
 
     assert!(log_has(
         &panel,
@@ -242,7 +272,12 @@ fn logs_a_rejected_inactive_change() {
     wait_for_rows(&mut panel, 1);
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_log(
+        &mut panel,
+        &mock,
+        LogLevel::Error,
+        "Failed to change the App Inactive state: the device kept `active`.",
+    );
 
     assert!(log_has(
         &panel,
@@ -290,7 +325,12 @@ fn logs_a_verified_doze_whitelist_change() {
     wait_for_rows(&mut panel, 1);
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Right));
-    wait_for_commands(&mut panel, &mock);
+    wait_for_log(
+        &mut panel,
+        &mock,
+        LogLevel::Success,
+        "com.example.app was added to the Doze whitelist.",
+    );
 
     assert!(log_has(
         &panel,
