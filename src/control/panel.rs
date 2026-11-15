@@ -11,10 +11,13 @@
 //! and the control strip that stays at the bottom of the panel.
 
 use std::io;
+use std::sync::Arc;
 
 use crossterm::event::KeyCode;
 
 use crate::adb::AdbClient;
+use crate::log::LogLevel;
+use crate::log::OperationLog;
 
 use super::appops::AppOpsSection;
 use super::buckets::BucketsSection;
@@ -70,16 +73,18 @@ pub struct ControlPanel {
     inventory_worker: Worker<InventoryTask>,
     viewport: Option<usize>,
     offset: usize,
+    log: Arc<OperationLog>,
 }
 
 impl ControlPanel {
     /// Creates the panel with every section collapsed.
     pub fn new(client: AdbClient) -> io::Result<Self> {
+        let log = Arc::new(OperationLog::new());
         let sections: Vec<Box<dyn ControlSection>> = vec![
-            Box::new(BucketsSection::new(client.clone())?),
-            Box::new(AppOpsSection::new(client.clone())?),
-            Box::new(InactiveSection::new(client.clone())?),
-            Box::new(DozeSection::new(client.clone())?),
+            Box::new(BucketsSection::new(client.clone(), Arc::clone(&log))?),
+            Box::new(AppOpsSection::new(client.clone(), Arc::clone(&log))?),
+            Box::new(InactiveSection::new(client.clone(), Arc::clone(&log))?),
+            Box::new(DozeSection::new(client.clone(), Arc::clone(&log))?),
         ];
         let inventory_worker = Worker::spawn(INVENTORY_THREAD)?;
 
@@ -94,8 +99,14 @@ impl ControlPanel {
             inventory_worker,
             viewport: None,
             offset: 0,
+            log,
         };
         return Ok(panel);
+    }
+
+    /// Returns the Operations Log that the sections report to.
+    pub fn log(&self) -> Arc<OperationLog> {
+        return Arc::clone(&self.log);
     }
 
     /// Points the panel at the device that the sections operate on.
@@ -350,11 +361,19 @@ impl ControlPanel {
     }
 
     /// Hands an inventory task to the inventory worker.
+    ///
+    /// Only the first load of a device is announced: a later load is part of a
+    /// refresh that the user asked for, and its result is reported anyway.
     fn request_inventory(&mut self) -> bool {
         let serial = match &self.target {
             Some(target) => target.serial.clone(),
             None => return false,
         };
+
+        if matches!(self.inventory, Inventory::Absent) {
+            let message = String::from("Loading the application inventory.");
+            self.log.record(LogLevel::Info, message);
+        }
 
         self.inventory_requested = true;
         let task = InventoryTask::load(
@@ -397,6 +416,10 @@ impl ControlPanel {
     }
 
     /// Hands one inventory to every section and remembers it.
+    ///
+    /// A loaded or failed inventory is an answer to a load that the user can
+    /// see the result of, so it is logged; a pending and an absent inventory
+    /// say nothing on their own.
     fn publish_inventory(&mut self, inventory: Inventory) -> bool {
         let mut changed = false;
         for section in &mut self.sections {
@@ -405,6 +428,20 @@ impl ControlPanel {
             }
         }
         self.inventory = inventory;
+
+        match &self.inventory {
+            Inventory::Loaded(packages) => {
+                let message = found_applications(packages.len());
+                self.log.record(LogLevel::Success, message);
+            }
+            Inventory::Failed(message) => {
+                let message = format!(
+                    "Could not load the application inventory: {message}"
+                );
+                self.log.record(LogLevel::Error, message);
+            }
+            Inventory::Absent | Inventory::Loading => {}
+        }
         return changed;
     }
 
@@ -453,6 +490,14 @@ impl ControlPanel {
         if !self.overlay.toggle() {
             return false;
         }
+
+        let message = if self.overlay.show_system() {
+            String::from("Showing system applications.")
+        } else {
+            String::from("Hiding system applications.")
+        };
+        self.log.record(LogLevel::Info, message);
+
         self.refresh_inventory();
         return true;
     }
@@ -665,4 +710,12 @@ impl ControlPanel {
         }
         return None;
     }
+}
+
+/// Returns the message that reports how many applications were found.
+fn found_applications(count: usize) -> String {
+    if count == 1 {
+        return String::from("Found 1 application.");
+    }
+    return format!("Found {count} applications.");
 }

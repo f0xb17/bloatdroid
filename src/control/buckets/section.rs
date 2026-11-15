@@ -1,6 +1,7 @@
 //! The Standby Buckets section.
 
 use std::io;
+use std::sync::Arc;
 
 use crossterm::event::KeyCode;
 
@@ -12,6 +13,8 @@ use crate::control::common::Inventory;
 use crate::control::common::Section;
 use crate::control::common::SectionState;
 use crate::control::common::Worker;
+use crate::log::LogLevel;
+use crate::log::OperationLog;
 
 use super::bucket::BucketSupport;
 use super::bucket::StandbyBucket;
@@ -54,11 +57,16 @@ pub struct BucketsSection {
     pending: Option<PendingChange>,
     loading: bool,
     loaded: bool,
+    log: Arc<OperationLog>,
 }
 
 impl BucketsSection {
-    /// Creates a collapsed section that runs ADB through the given client.
-    pub(crate) fn new(client: AdbClient) -> io::Result<Self> {
+    /// Creates a collapsed section that reports its operations to the given
+    /// log and runs ADB through the given client.
+    pub(crate) fn new(
+        client: AdbClient,
+        log: Arc<OperationLog>,
+    ) -> io::Result<Self> {
         let worker = Worker::spawn(WORKER_THREAD)?;
         let section = Self {
             state: SectionState::new(Section::Buckets),
@@ -70,6 +78,7 @@ impl BucketsSection {
             pending: None,
             loading: false,
             loaded: false,
+            log,
         };
         return Ok(section);
     }
@@ -104,6 +113,13 @@ impl BucketsSection {
             None => return false,
         };
 
+        let requested = format!(
+            "Setting {} to {}.",
+            entry.identifier,
+            target.name().to_ascii_uppercase()
+        );
+        self.log.record(LogLevel::Info, requested);
+
         let task = BucketTask::change(
             self.client.clone(),
             serial,
@@ -111,6 +127,9 @@ impl BucketsSection {
             target,
         );
         if self.worker.submit(task).is_err() {
+            let message =
+                format!("Could not start the change: {WORKER_STATUS}.");
+            self.log.record(LogLevel::Error, message);
             return self.state.set_status(Some(String::from(WORKER_STATUS)));
         }
 
@@ -188,6 +207,12 @@ impl BucketsSection {
         self.loaded = true;
 
         let mut changed = self.state.replace_entries(entries);
+        if unreadable > 0 {
+            let message = format!(
+                "Could not read the standby bucket of {unreadable} applications."
+            );
+            self.log.record(LogLevel::Warning, message);
+        }
         let status = match unreadable {
             0 => None,
             count => Some(format!("{count} applications could not be read")),
@@ -201,6 +226,12 @@ impl BucketsSection {
     /// Shows a verified bucket change.
     fn apply_change(&mut self, package: &str, bucket: StandbyBucket) -> bool {
         self.pending = None;
+
+        let message = format!(
+            "Standby bucket successfully changed to {}.",
+            bucket.name().to_ascii_uppercase()
+        );
+        self.log.record(LogLevel::Success, message);
 
         let mut changed = self.state.set_entry_value(package, bucket.name());
         if self.state.set_status(None) {
@@ -219,6 +250,8 @@ impl BucketsSection {
         {
             changed = true;
         }
+        let logged = format!("Failed to change the standby bucket: {message}.");
+        self.log.record(LogLevel::Error, logged);
         if self.state.set_status(Some(message)) {
             changed = true;
         }

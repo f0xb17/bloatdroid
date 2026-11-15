@@ -5,10 +5,15 @@
 //! `refresh`, and the drawing in `render`.
 
 mod app;
+mod log_layout;
+mod operations;
 mod refresh;
 mod render;
 
 pub use app::{App, Panel};
+pub use log_layout::{LEVEL_WIDTH, MESSAGE_COLUMN, TIMESTAMP_WIDTH};
+pub use log_layout::{LogRow, entry_rows};
+pub use operations::{OperationsPanel, level_style};
 
 use std::io::{self, Stdout};
 use std::time::Duration;
@@ -62,6 +67,7 @@ pub fn run() -> io::Result<()> {
 
         app.poll_discovery();
         app.poll_control();
+        app.poll_operations();
     }
 
     session.stop()?;

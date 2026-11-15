@@ -6,6 +6,7 @@ use std::time::Duration;
 use bloatdroid::control::ControlLine;
 use bloatdroid::control::ControlPanel;
 use bloatdroid::control::ControlTarget;
+use bloatdroid::log::LogLevel;
 
 use crate::common::MockAdb;
 
@@ -129,6 +130,25 @@ pub fn focused_text(panel: &ControlPanel) -> Option<String> {
         }
     }
     return None;
+}
+
+/// Returns the levels and messages the Operations Log holds, in order.
+pub fn log_entries(panel: &ControlPanel) -> Vec<(LogLevel, String)> {
+    let mut entries = Vec::new();
+    for entry in panel.log().snapshot() {
+        entries.push((entry.level(), String::from(entry.message())));
+    }
+    return entries;
+}
+
+/// Returns `true` when the log holds the given message at the given level.
+pub fn log_has(panel: &ControlPanel, level: LogLevel, message: &str) -> bool {
+    for (logged_level, logged_message) in log_entries(panel) {
+        if logged_level == level && logged_message == message {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Returns the lines of the control strip that stays at the bottom.

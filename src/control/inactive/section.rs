@@ -1,6 +1,7 @@
 //! The App Inactive section.
 
 use std::io;
+use std::sync::Arc;
 
 use crossterm::event::KeyCode;
 
@@ -12,6 +13,8 @@ use crate::control::common::Inventory;
 use crate::control::common::Section;
 use crate::control::common::SectionState;
 use crate::control::common::Worker;
+use crate::log::LogLevel;
+use crate::log::OperationLog;
 
 use super::state::InactiveState;
 use super::task::InactiveOutcome;
@@ -43,11 +46,16 @@ pub struct InactiveSection {
     pending: Option<PendingChange>,
     loading: bool,
     loaded: bool,
+    log: Arc<OperationLog>,
 }
 
 impl InactiveSection {
-    /// Creates a collapsed section that runs ADB through the given client.
-    pub(crate) fn new(client: AdbClient) -> io::Result<Self> {
+    /// Creates a collapsed section that reports its operations to the given
+    /// log and runs ADB through the given client.
+    pub(crate) fn new(
+        client: AdbClient,
+        log: Arc<OperationLog>,
+    ) -> io::Result<Self> {
         let worker = Worker::spawn(WORKER_THREAD)?;
         let section = Self {
             state: SectionState::new(Section::Inactive),
@@ -58,6 +66,7 @@ impl InactiveSection {
             pending: None,
             loading: false,
             loaded: false,
+            log,
         };
         return Ok(section);
     }
@@ -80,6 +89,13 @@ impl InactiveSection {
             None => return false,
         };
 
+        let requested = format!(
+            "Setting {} to {}.",
+            entry.identifier,
+            state.name().to_ascii_uppercase()
+        );
+        self.log.record(LogLevel::Info, requested);
+
         let task = InactiveTask::change(
             self.client.clone(),
             serial,
@@ -87,6 +103,9 @@ impl InactiveSection {
             state,
         );
         if self.worker.submit(task).is_err() {
+            let message =
+                format!("Could not start the change: {WORKER_STATUS}.");
+            self.log.record(LogLevel::Error, message);
             return self.state.set_status(Some(String::from(WORKER_STATUS)));
         }
 
@@ -164,6 +183,12 @@ impl InactiveSection {
         self.loaded = true;
 
         let mut changed = self.state.replace_entries(entries);
+        if unreadable > 0 {
+            let message = format!(
+                "Could not read the App Inactive state of {unreadable} applications."
+            );
+            self.log.record(LogLevel::Warning, message);
+        }
         let status = match unreadable {
             0 => None,
             count => Some(format!("{count} applications could not be read")),
@@ -177,6 +202,12 @@ impl InactiveSection {
     /// Shows a verified state change.
     fn apply_change(&mut self, package: &str, state: InactiveState) -> bool {
         self.pending = None;
+
+        let message = format!(
+            "App Inactive state successfully changed to {}.",
+            state.name().to_ascii_uppercase()
+        );
+        self.log.record(LogLevel::Success, message);
 
         let mut changed = self.state.set_entry_value(package, state.name());
         if self.state.set_status(None) {
@@ -195,6 +226,9 @@ impl InactiveSection {
         {
             changed = true;
         }
+        let logged =
+            format!("Failed to change the App Inactive state: {message}.");
+        self.log.record(LogLevel::Error, logged);
         if self.state.set_status(Some(message)) {
             changed = true;
         }

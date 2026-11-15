@@ -7,6 +7,7 @@ mod harness;
 mod inactive;
 mod inventory;
 mod layout;
+mod operations_log;
 mod overlay;
 mod panel;
 mod scanning;

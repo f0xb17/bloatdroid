@@ -1,6 +1,7 @@
 //! The AppOps section.
 
 use std::io;
+use std::sync::Arc;
 
 use crossterm::event::KeyCode;
 
@@ -12,6 +13,8 @@ use crate::control::common::Inventory;
 use crate::control::common::Section;
 use crate::control::common::SectionState;
 use crate::control::common::Worker;
+use crate::log::LogLevel;
+use crate::log::OperationLog;
 
 use super::mode::AppOpMode;
 use super::task::AppOpsOutcome;
@@ -52,11 +55,16 @@ pub struct AppOpsSection {
     pending: Option<PendingChange>,
     loading: bool,
     loaded: bool,
+    log: Arc<OperationLog>,
 }
 
 impl AppOpsSection {
-    /// Creates a collapsed section that runs ADB through the given client.
-    pub(crate) fn new(client: AdbClient) -> io::Result<Self> {
+    /// Creates a collapsed section that reports its operations to the given
+    /// log and runs ADB through the given client.
+    pub(crate) fn new(
+        client: AdbClient,
+        log: Arc<OperationLog>,
+    ) -> io::Result<Self> {
         let worker = Worker::spawn(WORKER_THREAD)?;
         let section = Self {
             state: SectionState::new(Section::AppOps),
@@ -67,6 +75,7 @@ impl AppOpsSection {
             pending: None,
             loading: false,
             loaded: false,
+            log,
         };
         return Ok(section);
     }
@@ -82,6 +91,12 @@ impl AppOpsSection {
             None => return false,
         };
         let mode = Self::target_mode(&entry.value, step);
+        let requested = format!(
+            "Setting {} to {}.",
+            entry.identifier,
+            mode.name().to_ascii_uppercase()
+        );
+        self.log.record(LogLevel::Info, requested);
 
         let task = AppOpsTask::change(
             self.client.clone(),
@@ -90,6 +105,9 @@ impl AppOpsSection {
             mode,
         );
         if self.worker.submit(task).is_err() {
+            let message =
+                format!("Could not start the change: {WORKER_STATUS}.");
+            self.log.record(LogLevel::Error, message);
             return self.state.set_status(Some(String::from(WORKER_STATUS)));
         }
 
@@ -185,6 +203,12 @@ impl AppOpsSection {
         self.loaded = true;
 
         let mut changed = self.state.replace_entries(entries);
+        if unreadable > 0 {
+            let message = format!(
+                "Could not read the AppOps mode of {unreadable} applications."
+            );
+            self.log.record(LogLevel::Warning, message);
+        }
         let status = match unreadable {
             0 => None,
             count => Some(format!("{count} applications could not be read")),
@@ -198,6 +222,12 @@ impl AppOpsSection {
     /// Shows a verified mode change.
     fn apply_change(&mut self, package: &str, mode: AppOpMode) -> bool {
         self.pending = None;
+
+        let message = format!(
+            "AppOps mode successfully changed to {}.",
+            mode.name().to_ascii_uppercase()
+        );
+        self.log.record(LogLevel::Success, message);
 
         let mut changed = self.state.set_entry_value(package, mode.name());
         if self.state.set_status(None) {
@@ -216,6 +246,8 @@ impl AppOpsSection {
         {
             changed = true;
         }
+        let logged = format!("Failed to change the AppOps mode: {message}.");
+        self.log.record(LogLevel::Error, logged);
         if self.state.set_status(Some(message)) {
             changed = true;
         }

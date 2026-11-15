@@ -1,11 +1,16 @@
 //! Application state and key handling for the terminal interface.
 
+use std::sync::Arc;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::control::ControlPanel;
 use crate::control::ControlTarget;
 use crate::discover::AndroidDevice;
+use crate::log::LogLevel;
+use crate::log::OperationLog;
 
+use super::operations::OperationsPanel;
 use super::refresh::RefreshWorker;
 use super::refresh::ScanOutcome;
 
@@ -68,6 +73,8 @@ pub struct App {
     overlay_open: bool,
     discovery_error: Option<String>,
     control: ControlPanel,
+    log: Arc<OperationLog>,
+    operations: OperationsPanel,
     refresh: RefreshWorker,
     redraw: bool,
 }
@@ -75,6 +82,8 @@ pub struct App {
 impl App {
     /// Creates the application with the first panel focused.
     pub(crate) fn new(refresh: RefreshWorker, control: ControlPanel) -> Self {
+        let log = control.log();
+        let operations = OperationsPanel::new(Arc::clone(&log));
         let app = Self {
             focused: Panel::DeviceSelection,
             running: true,
@@ -83,6 +92,8 @@ impl App {
             overlay_open: false,
             discovery_error: None,
             control,
+            log,
+            operations,
             refresh,
             redraw: true,
         };
@@ -130,6 +141,21 @@ impl App {
         return &self.control;
     }
 
+    /// Returns the Operations panel.
+    pub fn operations(&self) -> &OperationsPanel {
+        return &self.operations;
+    }
+
+    /// Tells the Operations panel how much room its rows have.
+    ///
+    /// The renderer calls this with the width and height it drew the panel in,
+    /// so the log layout and the scrolling follow the terminal size.
+    pub fn set_operations_viewport(&mut self, width: usize, height: usize) {
+        if self.operations.set_viewport(width, height) {
+            self.redraw = true;
+        }
+    }
+
     /// Tells the control panel how many rows its sections have.
     ///
     /// The renderer calls this with the height the sections have room for,
@@ -162,6 +188,13 @@ impl App {
     /// Applies the control work that finished in the background.
     pub fn poll_control(&mut self) {
         if self.control.poll() {
+            self.redraw = true;
+        }
+    }
+
+    /// Applies the log entries that were recorded since the last check.
+    pub fn poll_operations(&mut self) {
+        if self.operations.poll() {
             self.redraw = true;
         }
     }
@@ -204,8 +237,21 @@ impl App {
     }
 
     /// Applies a discovery result.
+    ///
+    /// Only a change is reported: a periodic pass that finds the same devices
+    /// and no error says nothing.
     fn apply_outcome(&mut self, outcome: ScanOutcome) {
         if self.discovery_error != outcome.error {
+            match &outcome.error {
+                Some(message) => {
+                    let message = format!("Device discovery failed: {message}");
+                    self.log.record(LogLevel::Error, message);
+                }
+                None => {
+                    let message = String::from("Device discovery recovered.");
+                    self.log.record(LogLevel::Info, message);
+                }
+            }
             self.discovery_error = outcome.error;
             self.redraw = true;
         }
@@ -216,11 +262,36 @@ impl App {
 
         let previous_identifier = self.selected_identifier();
         let previous_index = self.selected;
-        self.devices = outcome.devices;
+        let previous = std::mem::replace(&mut self.devices, outcome.devices);
         self.selected =
             self.reconciled_selection(previous_identifier, previous_index);
+        self.log_device_changes(&previous);
         self.redraw = true;
         self.sync_control_target();
+    }
+
+    /// Logs the devices that connected or disconnected since the last scan.
+    fn log_device_changes(&mut self, previous: &[AndroidDevice]) {
+        for device in &self.devices {
+            if has_identifier(previous, device.identifier.as_str()) {
+                continue;
+            }
+            let message = format!("Device {} connected.", device.identifier);
+            self.log.record(LogLevel::Info, message);
+        }
+
+        for device in previous {
+            if has_identifier(&self.devices, device.identifier.as_str()) {
+                continue;
+            }
+            let message = format!("Device {} disconnected.", device.identifier);
+            self.log.record(LogLevel::Warning, message);
+        }
+
+        if self.devices.is_empty() && !previous.is_empty() {
+            let message = String::from("No Android devices are connected.");
+            self.log.record(LogLevel::Warning, message);
+        }
     }
 
     /// Returns the identifier of the selected device.
@@ -305,6 +376,11 @@ impl App {
                 self.handle_device_selection_key(key);
                 self.sync_control_target();
             }
+            Panel::Operations => {
+                if self.operations.handle_key(key.code) {
+                    self.redraw = true;
+                }
+            }
             Panel::StandbyCrates => {
                 self.handle_control_key(key);
             }
@@ -368,6 +444,7 @@ impl App {
         };
         self.selected = Some(next);
         self.redraw = true;
+        self.log_selected_device();
     }
 
     /// Selects the previous device, wrapping around at the start.
@@ -384,6 +461,17 @@ impl App {
         };
         self.selected = Some(previous);
         self.redraw = true;
+        self.log_selected_device();
+    }
+
+    /// Logs the device that the user selected.
+    fn log_selected_device(&self) {
+        let device = match self.selected_device() {
+            Some(device) => device,
+            None => return,
+        };
+        let message = format!("Selected device {}.", device.identifier);
+        self.log.record(LogLevel::Info, message);
     }
 
     /// Opens the device information overlay for the selected device.
@@ -395,4 +483,14 @@ impl App {
         self.overlay_open = true;
         self.redraw = true;
     }
+}
+
+/// Returns `true` when the devices hold the given identifier.
+fn has_identifier(devices: &[AndroidDevice], identifier: &str) -> bool {
+    for device in devices {
+        if device.identifier == identifier {
+            return true;
+        }
+    }
+    return false;
 }

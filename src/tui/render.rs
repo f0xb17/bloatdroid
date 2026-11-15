@@ -4,6 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use crate::control::ControlLine;
@@ -12,6 +13,7 @@ use crate::control::common::application_row;
 
 use super::app::App;
 use super::app::Panel;
+use super::operations::level_style;
 
 /// How many columns a section header reserves for its expansion indicator.
 const INDICATOR_WIDTH: u16 = 2;
@@ -102,7 +104,37 @@ fn render_panel(frame: &mut Frame, app: &mut App, area: Rect, panel: Panel) {
         Panel::StandbyCrates => {
             render_control(frame, app, inner);
         }
+        Panel::Operations => {
+            render_operations(frame, app, inner);
+        }
         _ => {}
+    }
+}
+
+/// Draws the Operations Log inside the Operations panel.
+///
+/// The panel is told the size of its area first, because the log layout depends
+/// on the width and the scrolling depends on the height. Every row carries its
+/// own number of columns, so the panel draws one row per line.
+fn render_operations(frame: &mut Frame, app: &mut App, area: Rect) {
+    let width = usize::from(area.width);
+    let height = usize::from(area.height);
+    app.set_operations_viewport(width, height);
+
+    let bottom = area.y.saturating_add(area.height);
+    let mut y = area.y;
+    for (level, row) in app.operations().visible() {
+        if y >= bottom {
+            return;
+        }
+
+        let line = Line::from(vec![
+            Span::raw(String::from(row.prefix())),
+            Span::styled(String::from(row.message()), level_style(level)),
+        ]);
+        let row_area = Rect::new(area.x, y, area.width, 1);
+        frame.render_widget(Paragraph::new(line), row_area);
+        y = y.saturating_add(1);
     }
 }
 
