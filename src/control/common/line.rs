@@ -3,7 +3,7 @@
 use super::entry::ControlEntry;
 
 /// The kind of content a panel line carries.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Kind {
     /// The header of a section.
     Header {
@@ -11,7 +11,10 @@ enum Kind {
         expanded: bool,
     },
     /// One entry of an expanded section.
-    Entry,
+    Entry {
+        /// The value that the section currently has for the entry.
+        state: String,
+    },
     /// An informational message.
     Status,
     /// A checkbox of the control strip at the bottom of the panel.
@@ -26,7 +29,10 @@ enum Kind {
 /// Lines describe what to show, not how to style it, so the terminal layer can
 /// pick its own colours, markers, and expansion indicators. The text of a
 /// header is its title alone: the indicator is a rendering decision that must
-/// not influence the title layout.
+/// not influence the title layout. The text of an entry is the package name
+/// alone: the state label is kept apart, because the column it occupies
+/// depends on the width of the terminal and is therefore a rendering decision
+/// too.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ControlLine {
@@ -51,8 +57,10 @@ impl ControlLine {
     /// Builds the line of one entry.
     pub(crate) fn entry(entry: &ControlEntry, focused: bool) -> Self {
         let line = Self {
-            text: format!("{}  ({})", entry.identifier, entry.value),
-            kind: Kind::Entry,
+            text: entry.identifier.clone(),
+            kind: Kind::Entry {
+                state: entry.value.clone(),
+            },
             focused,
         };
         return line;
@@ -82,9 +90,23 @@ impl ControlLine {
 
     /// Returns the text of the line.
     ///
-    /// For a header this is the section title, without the indicator.
+    /// For a header this is the section title, without the indicator. For an
+    /// entry this is the package name, without the state label.
     pub fn text(&self) -> &str {
         return self.text.as_str();
+    }
+
+    /// Returns the state label of an entry line.
+    ///
+    /// Every other kind of line yields [`None`].
+    pub fn state(&self) -> Option<&str> {
+        let state = match &self.kind {
+            Kind::Entry {
+                state,
+            } => Some(state.as_str()),
+            _ => None,
+        };
+        return state;
     }
 
     /// Returns `true` when the line is the header of a section.

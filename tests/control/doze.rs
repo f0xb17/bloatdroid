@@ -202,10 +202,10 @@ fn classifies_user_system_and_excidle_entries() {
     wait_for_rows(&mut panel, 4);
 
     let expected = vec![
-        String::from("com.example.alpha  (user)"),
-        String::from("com.example.bravo  (system)"),
-        String::from("com.example.charlie  (system)"),
-        String::from("com.example.delta  (none)"),
+        String::from("com.example.alpha  user"),
+        String::from("com.example.bravo  system"),
+        String::from("com.example.charlie  system"),
+        String::from("com.example.delta  none"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
@@ -226,7 +226,7 @@ fn gives_system_entries_precedence_over_user_entries() {
     expand_doze(&mut panel);
     wait_for_rows(&mut panel, 1);
 
-    let expected = vec![String::from("com.example.app  (system)")];
+    let expected = vec![String::from("com.example.app  system")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -245,7 +245,7 @@ fn ignores_temporary_whitelist_entries() {
     expand_doze(&mut panel);
     wait_for_rows(&mut panel, 1);
 
-    let expected = vec![String::from("com.example.app  (none)")];
+    let expected = vec![String::from("com.example.app  none")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -259,7 +259,7 @@ fn treats_an_empty_whitelist_as_no_entries() {
     expand_doze(&mut panel);
     wait_for_rows(&mut panel, 1);
 
-    let expected = vec![String::from("com.example.app  (none)")];
+    let expected = vec![String::from("com.example.app  none")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
     mock.assert_complete();
@@ -321,9 +321,9 @@ fn loads_applications_sorted_by_package_name() {
     wait_for_rows(&mut panel, 3);
 
     let expected = vec![
-        String::from("com.example.alpha  (none)"),
-        String::from("com.example.mike  (none)"),
-        String::from("com.example.zulu  (none)"),
+        String::from("com.example.alpha  none"),
+        String::from("com.example.mike  none"),
+        String::from("com.example.zulu  none"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
@@ -390,7 +390,7 @@ fn adds_a_package_to_the_user_whitelist() {
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (user)")];
+    let expected = vec![String::from("com.example.app  user")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
     mock.assert_complete();
@@ -415,7 +415,7 @@ fn removes_a_package_from_the_user_whitelist() {
     assert!(panel.handle_key(KeyCode::Left));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (none)")];
+    let expected = vec![String::from("com.example.app  none")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -438,7 +438,7 @@ fn does_not_change_system_whitelist_entries() {
     assert!(!panel.handle_key(KeyCode::Right));
     assert!(!panel.handle_key(KeyCode::Left));
 
-    let expected = vec![String::from("com.example.app  (system)")];
+    let expected = vec![String::from("com.example.app  system")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -464,7 +464,7 @@ fn ignores_changes_while_another_is_pending() {
     assert!(!panel.handle_key(KeyCode::Left));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (user)")];
+    let expected = vec![String::from("com.example.app  user")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -485,7 +485,7 @@ fn reverts_changes_that_the_device_did_not_apply() {
         return status_contains(panel, "kept");
     });
 
-    let expected = vec![String::from("com.example.app  (none)")];
+    let expected = vec![String::from("com.example.app  none")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("kept"));
     mock.assert_complete();
@@ -518,7 +518,7 @@ fn reverts_changes_that_fail() {
         return status_contains(panel, "rejected");
     });
 
-    let expected = vec![String::from("com.example.app  (none)")];
+    let expected = vec![String::from("com.example.app  none")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("rejected"));
     mock.assert_complete();
@@ -540,7 +540,7 @@ fn reverts_changes_that_cannot_be_verified() {
         return status_contains(panel, "could not verify");
     });
 
-    let expected = vec![String::from("com.example.app  (none)")];
+    let expected = vec![String::from("com.example.app  none")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("could not verify"));
     mock.assert_complete();
@@ -593,7 +593,7 @@ fn reloads_states_after_collapsing_and_expanding() {
     assert!(panel.handle_key(KeyCode::Char(' ')));
     // Expanding again rescans the whitelist, so wait for the refreshed row.
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.alpha  (user)")];
+        let expected = vec![String::from("com.example.alpha  user")];
         return entry_texts(panel) == expected;
     });
 
@@ -632,7 +632,7 @@ fn discards_a_pending_change_when_the_device_changes() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.other  (system)")];
+        let expected = vec![String::from("com.example.other  system")];
         return entry_texts(panel) == expected;
     });
     assert!(status_texts(&panel).is_empty());
@@ -659,7 +659,7 @@ fn ignores_results_from_a_previous_device() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.second  (none)")];
+        let expected = vec![String::from("com.example.second  none")];
         return entry_texts(panel) == expected;
     });
     assert_eq!(package_listings(&mock, SERIAL), 1);

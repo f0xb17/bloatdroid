@@ -117,7 +117,7 @@ fn keeps_one_failing_package_from_failing_the_others() {
 
     let mut unknown = 0;
     for row in &rows {
-        if row.contains("(unknown)") {
+        if row.ends_with("unknown") {
             unknown += 1;
         }
     }

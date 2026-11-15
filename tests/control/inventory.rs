@@ -140,8 +140,8 @@ fn shares_one_listing_with_every_section() {
     assert_eq!(
         entry_texts(&panel),
         vec![
-            String::from("com.example.alpha  (active)"),
-            String::from("com.example.bravo  (active)"),
+            String::from("com.example.alpha  active"),
+            String::from("com.example.bravo  active"),
         ]
     );
     collapse(&mut panel);
@@ -152,8 +152,8 @@ fn shares_one_listing_with_every_section() {
     assert_eq!(
         entry_texts(&panel),
         vec![
-            String::from("com.example.alpha  (allow)"),
-            String::from("com.example.bravo  (allow)"),
+            String::from("com.example.alpha  allow"),
+            String::from("com.example.bravo  allow"),
         ]
     );
     collapse(&mut panel);
@@ -164,8 +164,8 @@ fn shares_one_listing_with_every_section() {
     assert_eq!(
         entry_texts(&panel),
         vec![
-            String::from("com.example.alpha  (active)"),
-            String::from("com.example.bravo  (active)"),
+            String::from("com.example.alpha  active"),
+            String::from("com.example.bravo  active"),
         ]
     );
     collapse(&mut panel);
@@ -176,8 +176,8 @@ fn shares_one_listing_with_every_section() {
     assert_eq!(
         entry_texts(&panel),
         vec![
-            String::from("com.example.alpha  (none)"),
-            String::from("com.example.bravo  (none)"),
+            String::from("com.example.alpha  none"),
+            String::from("com.example.bravo  none"),
         ]
     );
 
@@ -220,7 +220,7 @@ fn switching_devices_drops_the_inventory() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.other  (active)")];
+        let expected = vec![String::from("com.example.other  active")];
         return entry_texts(panel) == expected;
     });
 
@@ -274,7 +274,7 @@ fn ignores_the_inventory_of_a_previous_device() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.other  (active)")];
+        let expected = vec![String::from("com.example.other  active")];
         return entry_texts(panel) == expected;
     });
 

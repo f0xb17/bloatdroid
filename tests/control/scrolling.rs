@@ -11,6 +11,7 @@ use super::harness::ANDROID_13;
 use super::harness::SERIAL;
 use super::harness::entry_texts;
 use super::harness::focused_text;
+use super::harness::line_text;
 use super::harness::panel_for;
 use super::harness::wait_for;
 
@@ -54,7 +55,7 @@ fn expect_load(mock: &MockAdb) {
 fn visible_texts(panel: &ControlPanel) -> Vec<String> {
     let mut texts = Vec::new();
     for line in panel.lines() {
-        texts.push(String::from(line.text()));
+        texts.push(line_text(&line));
     }
     return texts;
 }
@@ -65,7 +66,7 @@ fn row(index: usize) -> String {
         Some(package) => *package,
         None => panic!("no application at position {index}"),
     };
-    return format!("{package}  (active)");
+    return format!("{package}  active");
 }
 
 /// Expands the Standby Buckets section and waits for every row.

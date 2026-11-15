@@ -158,8 +158,8 @@ fn lists_only_third_party_applications_by_default() {
     });
 
     let expected = vec![
-        String::from("com.example.alpha  (active)"),
-        String::from("com.example.bravo  (active)"),
+        String::from("com.example.alpha  active"),
+        String::from("com.example.bravo  active"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
@@ -193,9 +193,9 @@ fn reaches_the_checkbox_and_shows_system_applications() {
         return entry_texts(panel).len() == ALL_APPLICATIONS.len();
     });
     let expected = vec![
-        String::from("com.android.systemui  (active)"),
-        String::from("com.example.alpha  (active)"),
-        String::from("com.example.bravo  (active)"),
+        String::from("com.android.systemui  active"),
+        String::from("com.example.alpha  active"),
+        String::from("com.example.bravo  active"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
@@ -248,8 +248,8 @@ fn leaves_the_applications_alone_while_the_checkbox_has_focus() {
     assert!(!panel.handle_key(KeyCode::Right));
 
     let expected = vec![
-        String::from("com.example.alpha  (active)"),
-        String::from("com.example.bravo  (active)"),
+        String::from("com.example.alpha  active"),
+        String::from("com.example.bravo  active"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();

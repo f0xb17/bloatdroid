@@ -180,9 +180,9 @@ fn loads_states_sorted_by_package_name() {
     wait_for_rows(&mut panel, 3);
 
     let expected = vec![
-        String::from("com.example.alpha  (active)"),
-        String::from("com.example.mike  (inactive)"),
-        String::from("com.example.zulu  (inactive)"),
+        String::from("com.example.alpha  active"),
+        String::from("com.example.mike  inactive"),
+        String::from("com.example.zulu  inactive"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
@@ -202,7 +202,7 @@ fn skips_lines_that_do_not_report_the_state() {
     expand_inactive(&mut panel);
     wait_for_rows(&mut panel, 1);
 
-    let expected = vec![String::from("com.example.app  (inactive)")];
+    let expected = vec![String::from("com.example.app  inactive")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -221,8 +221,8 @@ fn treats_empty_and_unreadable_states_as_unknown() {
     wait_for_rows(&mut panel, 2);
 
     let expected = vec![
-        String::from("com.example.empty  (unknown)"),
-        String::from("com.example.odd  (unknown)"),
+        String::from("com.example.empty  unknown"),
+        String::from("com.example.odd  unknown"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("2 applications could not be read"));
@@ -262,7 +262,7 @@ fn toggles_to_inactive_and_verifies_it() {
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (inactive)")];
+    let expected = vec![String::from("com.example.app  inactive")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
     mock.assert_complete();
@@ -282,7 +282,7 @@ fn toggles_to_active_and_verifies_it() {
     assert!(panel.handle_key(KeyCode::Left));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (active)")];
+    let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -301,7 +301,7 @@ fn ignores_changes_for_unknown_states() {
     assert!(!panel.handle_key(KeyCode::Right));
     assert!(!panel.handle_key(KeyCode::Left));
 
-    let expected = vec![String::from("com.example.app  (unknown)")];
+    let expected = vec![String::from("com.example.app  unknown")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -322,7 +322,7 @@ fn ignores_changes_while_another_is_pending() {
     assert!(!panel.handle_key(KeyCode::Left));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (inactive)")];
+    let expected = vec![String::from("com.example.app  inactive")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -343,7 +343,7 @@ fn reverts_changes_that_the_device_did_not_apply() {
         return status_contains(panel, "kept");
     });
 
-    let expected = vec![String::from("com.example.app  (active)")];
+    let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("kept"));
     mock.assert_complete();
@@ -376,7 +376,7 @@ fn reverts_changes_that_fail() {
         return status_contains(panel, "rejected");
     });
 
-    let expected = vec![String::from("com.example.app  (active)")];
+    let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("rejected"));
     mock.assert_complete();
@@ -398,7 +398,7 @@ fn reverts_changes_that_cannot_be_verified() {
         return status_contains(panel, "could not be read");
     });
 
-    let expected = vec![String::from("com.example.app  (active)")];
+    let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("could not be read"));
     mock.assert_complete();
@@ -450,7 +450,7 @@ fn reloads_states_after_collapsing_and_expanding() {
     assert!(panel.handle_key(KeyCode::Char(' ')));
     // Expanding again rescans the states, so wait for the refreshed row.
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.alpha  (inactive)")];
+        let expected = vec![String::from("com.example.alpha  inactive")];
         return entry_texts(panel) == expected;
     });
 
@@ -478,7 +478,7 @@ fn discards_a_pending_change_when_the_device_changes() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.other  (inactive)")];
+        let expected = vec![String::from("com.example.other  inactive")];
         return entry_texts(panel) == expected;
     });
     assert!(status_texts(&panel).is_empty());
@@ -505,7 +505,7 @@ fn ignores_results_from_a_previous_device() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.second  (inactive)")];
+        let expected = vec![String::from("com.example.second  inactive")];
         return entry_texts(panel) == expected;
     });
     assert_eq!(package_listings(&mock, SERIAL), 1);

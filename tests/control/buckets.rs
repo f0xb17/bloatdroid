@@ -123,9 +123,9 @@ fn loads_applications_sorted_by_package_name() {
     wait_for_rows(&mut panel, 3);
 
     let expected = vec![
-        String::from("com.example.alpha  (rare)"),
-        String::from("com.example.mike  (working_set)"),
-        String::from("com.example.zulu  (active)"),
+        String::from("com.example.alpha  rare"),
+        String::from("com.example.mike  working_set"),
+        String::from("com.example.zulu  active"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
@@ -145,7 +145,7 @@ fn changes_a_bucket_and_verifies_it() {
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (frequent)")];
+    let expected = vec![String::from("com.example.app  frequent")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
     mock.assert_complete();
@@ -165,7 +165,7 @@ fn moves_back_towards_the_more_active_buckets() {
     assert!(panel.handle_key(KeyCode::Left));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (active)")];
+    let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -182,7 +182,7 @@ fn stops_at_the_most_active_bucket() {
 
     assert!(!panel.handle_key(KeyCode::Left));
 
-    let expected = vec![String::from("com.example.app  (active)")];
+    let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -201,7 +201,7 @@ fn offers_restricted_from_android_11() {
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (restricted)")];
+    let expected = vec![String::from("com.example.app  restricted")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -220,7 +220,7 @@ fn does_not_offer_restricted_before_android_11() {
     // is sent.
     assert!(!panel.handle_key(KeyCode::Right));
 
-    let expected = vec![String::from("com.example.app  (rare)")];
+    let expected = vec![String::from("com.example.app  rare")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -257,7 +257,7 @@ fn reverts_changes_that_the_device_did_not_apply() {
         return status_contains(panel, "kept");
     });
 
-    let expected = vec![String::from("com.example.app  (working_set)")];
+    let expected = vec![String::from("com.example.app  working_set")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("kept"));
     mock.assert_complete();
@@ -290,7 +290,7 @@ fn reverts_changes_that_fail() {
         return status_contains(panel, "rejected");
     });
 
-    let expected = vec![String::from("com.example.app  (working_set)")];
+    let expected = vec![String::from("com.example.app  working_set")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("rejected"));
     mock.assert_complete();
@@ -305,7 +305,7 @@ fn reports_unreadable_buckets_and_leaves_them_alone() {
     expand_buckets(&mut panel);
     wait_for_rows(&mut panel, 1);
 
-    let expected = vec![String::from("com.example.app  (unknown)")];
+    let expected = vec![String::from("com.example.app  unknown")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("could not be read"));
 
@@ -367,13 +367,13 @@ fn keeps_the_selected_application_after_an_inventory_refresh() {
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Down));
     assert!(panel.handle_key(KeyCode::Down));
-    assert_eq!(focused_row(&panel), "com.example.charlie  (active)");
+    assert_eq!(focused_row(&panel), "com.example.charlie  active");
 
     // The refresh happens while an application stays selected.
     assert!(panel.refresh_inventory());
     wait_for_rows(&mut panel, 4);
 
-    assert_eq!(focused_row(&panel), "com.example.charlie  (active)");
+    assert_eq!(focused_row(&panel), "com.example.charlie  active");
     mock.assert_complete();
 }
 
@@ -440,9 +440,9 @@ fn shows_numeric_buckets_as_their_names() {
     wait_for_rows(&mut panel, 3);
 
     let expected = vec![
-        String::from("com.example.alpha  (active)"),
-        String::from("com.example.mike  (working_set)"),
-        String::from("com.example.zulu  (restricted)"),
+        String::from("com.example.alpha  active"),
+        String::from("com.example.mike  working_set"),
+        String::from("com.example.zulu  restricted"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
@@ -458,7 +458,7 @@ fn shows_the_exempted_bucket_and_leaves_it_alone() {
     wait_for_rows(&mut panel, 1);
     focus_first_application(&mut panel);
 
-    let expected = vec![String::from("com.example.app  (exempted)")];
+    let expected = vec![String::from("com.example.app  exempted")];
     assert_eq!(entry_texts(&panel), expected);
 
     // The bucket is read-only, so neither arrow asks the device for a change.
@@ -480,7 +480,7 @@ fn never_changes_a_bucket_it_does_not_understand() {
     wait_for_rows(&mut panel, 1);
     focus_first_application(&mut panel);
 
-    let expected = vec![String::from("com.example.app  (unknown)")];
+    let expected = vec![String::from("com.example.app  unknown")];
     assert_eq!(entry_texts(&panel), expected);
 
     assert!(!panel.handle_key(KeyCode::Right));
@@ -521,7 +521,7 @@ fn cycles_from_a_numeric_bucket() {
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (frequent)")];
+    let expected = vec![String::from("com.example.app  frequent")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
     mock.assert_complete();
@@ -559,7 +559,7 @@ fn reverts_when_the_device_reports_another_numeric_bucket() {
         return status_contains(panel, "kept");
     });
 
-    let expected = vec![String::from("com.example.app  (working_set)")];
+    let expected = vec![String::from("com.example.app  working_set")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("kept `active`"));
     mock.assert_complete();
@@ -596,7 +596,7 @@ fn reverts_when_the_device_reports_no_bucket() {
         return status_contains(panel, "could not be read");
     });
 
-    let expected = vec![String::from("com.example.app  (active)")];
+    let expected = vec![String::from("com.example.app  active")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -610,7 +610,7 @@ fn collapsing_returns_the_cursor_to_the_header() {
     expand_buckets(&mut panel);
     wait_for_rows(&mut panel, 1);
     focus_first_application(&mut panel);
-    assert_eq!(focused_row(&panel), "com.example.app  (active)");
+    assert_eq!(focused_row(&panel), "com.example.app  active");
 
     assert!(panel.handle_key(KeyCode::Char(' ')));
 

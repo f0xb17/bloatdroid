@@ -187,9 +187,9 @@ fn loads_applications_sorted_by_package_name() {
     wait_for_rows(&mut panel, 3);
 
     let expected = vec![
-        String::from("com.example.alpha  (ignore)"),
-        String::from("com.example.mike  (default)"),
-        String::from("com.example.zulu  (allow)"),
+        String::from("com.example.alpha  ignore"),
+        String::from("com.example.mike  default"),
+        String::from("com.example.zulu  allow"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
@@ -204,7 +204,7 @@ fn treats_a_missing_operation_as_default() {
     expand_appops(&mut panel);
     wait_for_rows(&mut panel, 1);
 
-    let expected = vec![String::from("com.example.app  (default)")];
+    let expected = vec![String::from("com.example.app  default")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
     mock.assert_complete();
@@ -226,7 +226,7 @@ fn reads_the_mode_of_a_verbose_operation_entry() {
     expand_appops(&mut panel);
     wait_for_rows(&mut panel, 1);
 
-    let expected = vec![String::from("com.example.app  (ignore)")];
+    let expected = vec![String::from("com.example.app  ignore")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -272,8 +272,8 @@ fn reports_applications_whose_mode_cannot_be_read() {
     wait_for_rows(&mut panel, 2);
 
     let expected = vec![
-        String::from("com.example.broken  (unknown)"),
-        String::from("com.example.odd  (unknown)"),
+        String::from("com.example.broken  unknown"),
+        String::from("com.example.odd  unknown"),
     ];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("2 applications could not be read"));
@@ -323,7 +323,7 @@ fn changes_a_mode_and_verifies_it() {
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (default)")];
+    let expected = vec![String::from("com.example.app  default")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(status_texts(&panel).is_empty());
     mock.assert_complete();
@@ -353,7 +353,7 @@ fn moves_back_to_the_previous_mode() {
     assert!(panel.handle_key(KeyCode::Left));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (allow)")];
+    let expected = vec![String::from("com.example.app  allow")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -382,7 +382,7 @@ fn wraps_from_the_restricted_mode_to_allow() {
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (allow)")];
+    let expected = vec![String::from("com.example.app  allow")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -404,14 +404,14 @@ fn changes_an_unreadable_mode_to_default() {
     wait_for_rows(&mut panel, 1);
     assert_eq!(
         entry_texts(&panel),
-        vec![String::from("com.example.app  (unknown)")]
+        vec![String::from("com.example.app  unknown")]
     );
 
     focus_first_application(&mut panel);
     assert!(panel.handle_key(KeyCode::Right));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (default)")];
+    let expected = vec![String::from("com.example.app  default")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -442,7 +442,7 @@ fn ignores_changes_while_another_is_pending() {
     assert!(!panel.handle_key(KeyCode::Left));
     wait_for_commands(&mut panel, &mock);
 
-    let expected = vec![String::from("com.example.app  (default)")];
+    let expected = vec![String::from("com.example.app  default")];
     assert_eq!(entry_texts(&panel), expected);
     mock.assert_complete();
 }
@@ -473,7 +473,7 @@ fn reverts_changes_that_the_device_did_not_apply() {
         return status_contains(panel, "kept");
     });
 
-    let expected = vec![String::from("com.example.app  (allow)")];
+    let expected = vec![String::from("com.example.app  allow")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("kept"));
     mock.assert_complete();
@@ -512,7 +512,7 @@ fn reverts_changes_that_fail() {
         return status_contains(panel, "rejected");
     });
 
-    let expected = vec![String::from("com.example.app  (allow)")];
+    let expected = vec![String::from("com.example.app  allow")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("rejected"));
     mock.assert_complete();
@@ -544,7 +544,7 @@ fn reverts_changes_that_cannot_be_verified() {
         return status_contains(panel, "could not be read");
     });
 
-    let expected = vec![String::from("com.example.app  (allow)")];
+    let expected = vec![String::from("com.example.app  allow")];
     assert_eq!(entry_texts(&panel), expected);
     assert!(only_status(&panel).contains("could not be read"));
     mock.assert_complete();
@@ -608,7 +608,7 @@ fn reloads_states_after_collapsing_and_expanding() {
     assert!(panel.handle_key(KeyCode::Char(' ')));
     // Expanding again rescans the modes, so wait for the refreshed row.
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.alpha  (default)")];
+        let expected = vec![String::from("com.example.alpha  default")];
         return entry_texts(panel) == expected;
     });
 
@@ -650,7 +650,7 @@ fn discards_a_pending_change_when_the_device_changes() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.other  (ignore)")];
+        let expected = vec![String::from("com.example.other  ignore")];
         return entry_texts(panel) == expected;
     });
     assert!(status_texts(&panel).is_empty());
@@ -685,7 +685,7 @@ fn ignores_results_from_a_previous_device() {
     assert!(panel.set_target(Some(target)));
 
     wait_for(&mut panel, |panel| {
-        let expected = vec![String::from("com.example.second  (ignore)")];
+        let expected = vec![String::from("com.example.second  ignore")];
         return entry_texts(panel) == expected;
     });
     assert_eq!(package_listings(&mock, SERIAL), 1);

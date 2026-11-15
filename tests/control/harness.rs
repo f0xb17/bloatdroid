@@ -88,6 +88,16 @@ pub fn header_expansion(panel: &ControlPanel) -> Vec<bool> {
     return expanded;
 }
 
+/// Returns the text of one panel line, with the two columns of an application
+/// row joined by the columns that separate them.
+pub fn line_text(line: &ControlLine) -> String {
+    let state = match line.state() {
+        Some(state) => state,
+        None => return String::from(line.text()),
+    };
+    return format!("{}  {}", line.text(), state);
+}
+
 /// Returns the text of the application rows, in display order.
 pub fn entry_texts(panel: &ControlPanel) -> Vec<String> {
     let mut texts = Vec::new();
@@ -95,7 +105,7 @@ pub fn entry_texts(panel: &ControlPanel) -> Vec<String> {
         if line.is_header() || line.is_status() {
             continue;
         }
-        texts.push(String::from(line.text()));
+        texts.push(line_text(&line));
     }
     return texts;
 }
@@ -115,7 +125,7 @@ pub fn status_texts(panel: &ControlPanel) -> Vec<String> {
 pub fn focused_text(panel: &ControlPanel) -> Option<String> {
     for line in panel.lines() {
         if line.is_focused() {
-            return Some(String::from(line.text()));
+            return Some(line_text(&line));
         }
     }
     return None;

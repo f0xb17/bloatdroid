@@ -8,12 +8,16 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use crate::control::ControlLine;
 use crate::control::ControlPanel;
+use crate::control::common::application_row;
 
 use super::app::App;
 use super::app::Panel;
 
 /// How many columns a section header reserves for its expansion indicator.
 const INDICATOR_WIDTH: u16 = 2;
+
+/// How many columns an entry line reserves for its focus marker.
+const MARKER_WIDTH: u16 = 2;
 
 /// The indicator of a collapsed section.
 const COLLAPSED_INDICATOR: &str = "▶";
@@ -207,9 +211,25 @@ fn render_control_line(frame: &mut Frame, row: Rect, line: &ControlLine) {
     } else {
         "  "
     };
-    let body = Paragraph::new(format!("{marker}{}", line.text()))
-        .style(control_content_style(line));
+    let text = control_line_text(line, marker, row.width);
+    let body = Paragraph::new(text).style(control_content_style(line));
     frame.render_widget(body, row);
+}
+
+/// Returns the text of an entry or status line.
+///
+/// An entry is laid out by the shared two-column helper, so its state label
+/// ends at the right edge of the row in every section. A status line is shown
+/// as it is.
+fn control_line_text(line: &ControlLine, marker: &str, width: u16) -> String {
+    let state = match line.state() {
+        Some(state) => state,
+        None => return format!("{marker}{}", line.text()),
+    };
+
+    let available = usize::from(width.saturating_sub(MARKER_WIDTH));
+    let text = application_row(line.text(), state, available);
+    return format!("{marker}{text}");
 }
 
 /// Draws a section header as a filled block that spans the whole row.
